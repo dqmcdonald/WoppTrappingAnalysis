@@ -32,10 +32,11 @@ python report_traps.py -a
 python report_traps.py traps.csv --species --over-time
 
 # Available analysis flags (combine freely; omit all to include everything):
-#   --species     Catches by species
-#   --over-time   Catches per week over time
-#   --top-traps   Top traps by total catches
-#   --status      Trap status distribution
+#   --species              Catches by species
+#   --over-time            Catches per week over time
+#   --species-over-time    Catches per week broken down by species
+#   --top-traps            Top traps by total catches
+#   --status               Trap status distribution
 ```
 
 Output is written as `<csvname>_report.pdf` alongside each input file.
@@ -46,7 +47,8 @@ Each PDF includes (subject to the analysis flags chosen):
 
 - Summary table (visits, traps, catches, catch rate, date range)
 - Catches by species
-- Catches over time (weekly)
+- Catches over time (weekly, total)
+- Catches over time (weekly, broken down by species)
 - Top traps by catches
 - Trap status breakdown (bait OK / bad / missing / sprung)
 

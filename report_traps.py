@@ -8,10 +8,11 @@ Usage:
     report_traps.py <csv> --species --over-time  # two analyses
 
 Analysis flags (combine freely; omit all to include everything):
-    --species     Catches by species
-    --over-time   Catches per week over time
-    --top-traps   Top traps by total catches
-    --status      Trap status distribution
+    --species              Catches by species
+    --over-time            Catches per week over time
+    --species-over-time    Catches per week broken down by species
+    --top-traps            Top traps by total catches
+    --status               Trap status distribution
 """
 
 import argparse
@@ -149,6 +150,33 @@ def plot_over_time(df: pd.DataFrame) -> io.BytesIO:
     return _fig_to_buf(fig)
 
 
+def plot_species_over_time(df: pd.DataFrame) -> io.BytesIO:
+    catches = df[df["strikes"] > 0].copy()
+    catches["species caught"] = catches["species caught"].replace({"None": pd.NA, "": pd.NA})
+    catches = catches.dropna(subset=["species caught"])
+
+    fig, ax = plt.subplots()
+    if catches.empty:
+        ax.text(0.5, 0.5, "No catches recorded", ha="center", va="center")
+        ax.set_axis_off()
+    else:
+        for species in sorted(catches["species caught"].unique()):
+            weekly = (
+                catches[catches["species caught"] == species]
+                .set_index("date")["strikes"]
+                .resample("W-MON", label="left", closed="left")
+                .sum()
+            )
+            ax.plot(weekly.index, weekly.values, marker="o", label=species)
+        ax.set_ylabel("Catches")
+        ax.set_xlabel("Week starting")
+        ax.set_title("Catches per week by species")
+        ax.legend()
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m/%Y"))
+        fig.autofmt_xdate()
+    return _fig_to_buf(fig)
+
+
 def plot_top_traps(top: pd.Series) -> io.BytesIO:
     fig, ax = plt.subplots()
     if top.empty:
@@ -175,15 +203,16 @@ def plot_status(status: pd.Series) -> io.BytesIO:
     return _fig_to_buf(fig)
 
 
-ALL_ANALYSES = {"species", "over_time", "top_traps", "status"}
+ALL_ANALYSES = {"species", "over_time", "species_over_time", "top_traps", "status"}
 
 
 def make_plots(df: pd.DataFrame, stats: dict, selected: set[str]) -> dict:
     builders = {
-        "species": lambda: plot_species(stats["species"]),
-        "over_time": lambda: plot_over_time(df),
-        "top_traps": lambda: plot_top_traps(stats["top_traps"]),
-        "status": lambda: plot_status(stats["status"]),
+        "species":          lambda: plot_species(stats["species"]),
+        "over_time":        lambda: plot_over_time(df),
+        "species_over_time": lambda: plot_species_over_time(df),
+        "top_traps":        lambda: plot_top_traps(stats["top_traps"]),
+        "status":           lambda: plot_status(stats["status"]),
     }
     return {key: fn() for key, fn in builders.items() if key in selected}
 
@@ -267,10 +296,11 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path) -> Non
     story.append(Spacer(1, 0.25 * inch))
 
     sections = [
-        ("species", "Catches by species", False),
-        ("over_time", "Catches over time", True),
-        ("top_traps", "Top traps", True),
-        ("status", "Trap status", False),
+        ("species",          "Catches by species",             False),
+        ("over_time",        "Catches over time",              True),
+        ("species_over_time", "Catches over time by species",  True),
+        ("top_traps",        "Top traps",                      True),
+        ("status",           "Trap status",                    False),
     ]
 
     for key, heading, page_break_after in sections:
@@ -335,6 +365,9 @@ def main(argv: list[str] | None = None) -> int:
         "--over-time", action="store_true", help="Catches per week over time"
     )
     analysis_group.add_argument(
+        "--species-over-time", action="store_true", help="Catches per week broken down by species"
+    )
+    analysis_group.add_argument(
         "--top-traps", action="store_true", help="Top traps by total catches"
     )
     analysis_group.add_argument(
@@ -351,10 +384,11 @@ def main(argv: list[str] | None = None) -> int:
     requested = {
         key
         for key, flag in [
-            ("species", args.species),
-            ("over_time", args.over_time),
-            ("top_traps", args.top_traps),
-            ("status", args.status),
+            ("species",          args.species),
+            ("over_time",        args.over_time),
+            ("species_over_time", args.species_over_time),
+            ("top_traps",        args.top_traps),
+            ("status",           args.status),
         ]
         if flag
     }
