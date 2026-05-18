@@ -12,6 +12,7 @@ Analysis flags (combine freely; omit all to include everything):
     --over-time            Catches per week over time
     --species-over-time    Catches per week broken down by species
     --top-traps            Top traps by total catches
+    --catch-rates          Best and worst traps by catch rate
     --status               Trap status distribution
 """
 
@@ -44,6 +45,8 @@ from reportlab.platypus import (
 
 PLOT_DPI = 150
 PLOT_W_IN, PLOT_H_IN = 6.5, 4.0
+CATCH_RATE_MIN_VISITS = 3
+CATCH_RATE_N = 10
 
 plt.style.use("seaborn-v0_8")
 plt.rcParams.update(
@@ -92,6 +95,13 @@ def compute_stats(df: pd.DataFrame) -> dict:
 
     status_counts = df["status"].value_counts()
 
+    by_trap = df.groupby("code").agg(
+        visits=("strikes", "size"),
+        catches=("strikes", "sum"),
+    )
+    by_trap = by_trap[by_trap["visits"] >= CATCH_RATE_MIN_VISITS].copy()
+    by_trap["rate"] = by_trap["catches"] / by_trap["visits"] * 100
+
     return {
         "total_visits": total_visits,
         "unique_traps": int(df["trap nid"].nunique()),
@@ -102,16 +112,19 @@ def compute_stats(df: pd.DataFrame) -> dict:
         "species": species,
         "top_traps": top_traps,
         "status": status_counts,
+        "by_trap_rate": by_trap,
     }
 
 
 # ---------- plots ----------
 
 
-def _fig_to_buf(fig) -> io.BytesIO:
+def _fig_to_buf(fig, tight: bool = True) -> io.BytesIO:
     buf = io.BytesIO()
-    fig.tight_layout()
-    fig.savefig(buf, format="png", dpi=PLOT_DPI)
+    kwargs = {} if tight else {"bbox_inches": "tight"}
+    if tight:
+        fig.tight_layout()
+    fig.savefig(buf, format="png", dpi=PLOT_DPI, **kwargs)
     plt.close(fig)
     buf.seek(0)
     return buf
@@ -176,6 +189,40 @@ def plot_species_over_time(df: pd.DataFrame) -> io.BytesIO:
     return _fig_to_buf(fig)
 
 
+def plot_catch_rates(by_trap: pd.DataFrame) -> io.BytesIO:
+    fig, (ax_best, ax_worst) = plt.subplots(1, 2)
+
+    if by_trap.empty:
+        for ax in (ax_best, ax_worst):
+            ax.text(0.5, 0.5, f"No traps with ≥{CATCH_RATE_MIN_VISITS} visits",
+                    ha="center", va="center")
+            ax.set_axis_off()
+        return _fig_to_buf(fig)
+
+    n = min(CATCH_RATE_N, len(by_trap))
+    best = by_trap.nlargest(n, "rate").sort_values("rate")
+    # Sort worst so lowest rate (most problematic) is at the top of the chart
+    worst = (
+        by_trap.sort_values(["rate", "visits"], ascending=[True, False])
+        .head(n)
+        .sort_values("rate", ascending=False)
+    )
+
+    for ax, data, color, title in (
+        (ax_best,  best,  "#3b6ea2", f"Best {n}"),
+        (ax_worst, worst, "#a23b3b", f"Worst {n}"),
+    ):
+        ax.barh(data.index, data["rate"], color=color)
+        for i, (rate, visits) in enumerate(zip(data["rate"], data["visits"])):
+            ax.text(max(rate, 0.3), i, f" {rate:.1f}% ({int(visits)}v)",
+                    va="center", fontsize=7)
+        ax.set_xlabel("Catch rate (%)")
+        ax.set_title(title)
+
+    fig.suptitle(f"Trap catch rates (min. {CATCH_RATE_MIN_VISITS} visits)")
+    return _fig_to_buf(fig, tight=False)
+
+
 def plot_top_traps(top: pd.Series) -> io.BytesIO:
     fig, ax = plt.subplots()
     if top.empty:
@@ -202,16 +249,17 @@ def plot_status(status: pd.Series) -> io.BytesIO:
     return _fig_to_buf(fig)
 
 
-ALL_ANALYSES = {"species", "over_time", "species_over_time", "top_traps", "status"}
+ALL_ANALYSES = {"species", "over_time", "species_over_time", "catch_rates", "top_traps", "status"}
 
 
 def make_plots(df: pd.DataFrame, stats: dict, selected: set[str]) -> dict:
     builders = {
-        "species":          lambda: plot_species(stats["species"]),
-        "over_time":        lambda: plot_over_time(df),
+        "species":           lambda: plot_species(stats["species"]),
+        "over_time":         lambda: plot_over_time(df),
         "species_over_time": lambda: plot_species_over_time(df),
-        "top_traps":        lambda: plot_top_traps(stats["top_traps"]),
-        "status":           lambda: plot_status(stats["status"]),
+        "catch_rates":       lambda: plot_catch_rates(stats["by_trap_rate"]),
+        "top_traps":         lambda: plot_top_traps(stats["top_traps"]),
+        "status":            lambda: plot_status(stats["status"]),
     }
     return {key: fn() for key, fn in builders.items() if key in selected}
 
@@ -295,11 +343,12 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path) -> Non
     story.append(Spacer(1, 0.25 * inch))
 
     sections = [
-        ("species",          "Catches by species",             False),
-        ("over_time",        "Catches over time",              True),
+        ("species",           "Catches by species",            False),
+        ("over_time",         "Catches over time",             True),
         ("species_over_time", "Catches over time by species",  True),
-        ("top_traps",        "Top traps",                      True),
-        ("status",           "Trap status",                    False),
+        ("catch_rates",       "Trap catch rates",              True),
+        ("top_traps",         "Top traps by total catches",    True),
+        ("status",            "Trap status",                   False),
     ]
 
     for key, heading, page_break_after in sections:
@@ -312,6 +361,29 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path) -> Non
             rows = [[sp, str(int(n))] for sp, n in stats["species"].items()]
             story.append(Spacer(1, 0.1 * inch))
             story.append(_grid_table(["Species", "Catches"], rows))
+
+        if key == "catch_rates":
+            bt = stats["by_trap_rate"]
+            if not bt.empty:
+                n = min(CATCH_RATE_N, len(bt))
+                best = bt.nlargest(n, "rate").sort_values("rate", ascending=False)
+                worst = (
+                    bt.sort_values(["rate", "visits"], ascending=[True, False]).head(n)
+                )
+                story.append(Spacer(1, 0.1 * inch))
+                story.append(Paragraph(f"Best {n} traps by catch rate", h2))
+                story.append(_grid_table(
+                    ["Trap", "Visits", "Catches", "Rate"],
+                    [[t, str(int(r.visits)), str(int(r.catches)), f"{r.rate:.1f}%"]
+                     for t, r in best.iterrows()],
+                ))
+                story.append(Spacer(1, 0.15 * inch))
+                story.append(Paragraph(f"Worst {n} traps by catch rate", h2))
+                story.append(_grid_table(
+                    ["Trap", "Visits", "Catches", "Rate"],
+                    [[t, str(int(r.visits)), str(int(r.catches)), f"{r.rate:.1f}%"]
+                     for t, r in worst.iterrows()],
+                ))
 
         if page_break_after:
             story.append(PageBreak())
@@ -367,6 +439,10 @@ def main(argv: list[str] | None = None) -> int:
         "--species-over-time", action="store_true", help="Catches per week broken down by species"
     )
     analysis_group.add_argument(
+        "--catch-rates", action="store_true",
+        help=f"Best and worst traps by catch rate (min. {CATCH_RATE_MIN_VISITS} visits)"
+    )
+    analysis_group.add_argument(
         "--top-traps", action="store_true", help="Top traps by total catches"
     )
     analysis_group.add_argument(
@@ -383,11 +459,12 @@ def main(argv: list[str] | None = None) -> int:
     requested = {
         key
         for key, flag in [
-            ("species",          args.species),
-            ("over_time",        args.over_time),
+            ("species",           args.species),
+            ("over_time",         args.over_time),
             ("species_over_time", args.species_over_time),
-            ("top_traps",        args.top_traps),
-            ("status",           args.status),
+            ("catch_rates",       args.catch_rates),
+            ("top_traps",         args.top_traps),
+            ("status",            args.status),
         ]
         if flag
     }
