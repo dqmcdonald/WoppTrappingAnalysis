@@ -1,6 +1,6 @@
 # Wopp Trapping Analysis
 
-Analysis of pest-trapping data from trap networks around Whakaraupoū/Lyttleton Harbour, New Zealand.
+Analysis of pest-trapping data from trap networks around Whakaraupō/Lyttelton Harbour, New Zealand.
 
 Data is exported from [Trap.NZ](https://trap.nz) in their standard CSV format.
 
