@@ -45,16 +45,14 @@ from reportlab.platypus import (
 PLOT_DPI = 150
 PLOT_W_IN, PLOT_H_IN = 6.5, 4.0
 
+plt.style.use("seaborn-v0_8")
 plt.rcParams.update(
     {
         "figure.figsize": (PLOT_W_IN, PLOT_H_IN),
         "figure.dpi": PLOT_DPI,
         "font.size": 10,
         "axes.titlesize": 12,
-        "axes.spines.top": False,
-        "axes.spines.right": False,
-        "axes.grid": True,
-        "grid.alpha": 0.25,
+        "lines.markersize": 3,
     }
 )
 
