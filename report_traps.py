@@ -53,6 +53,7 @@ plt.rcParams.update(
         "font.size": 10,
         "axes.titlesize": 12,
         "lines.markersize": 3,
+        "lines.linewidth": 0.75,
     }
 )
 
