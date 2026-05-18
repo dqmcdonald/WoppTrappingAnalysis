@@ -35,8 +35,7 @@ python report_traps.py traps.csv --species --over-time
 #   --species              Catches by species
 #   --over-time            Catches per week over time
 #   --species-over-time    Catches per week broken down by species
-#   --catch-rates          Best and worst traps by catch rate
-#   --top-traps            Top traps by total catches
+#   --catch-rates          Best traps by catch rate
 #   --status               Trap status distribution
 ```
 
@@ -50,8 +49,7 @@ Each PDF includes (subject to the analysis flags chosen):
 - Catches by species
 - Catches over time (weekly, total)
 - Catches over time (weekly, broken down by species)
-- Best and worst traps by catch rate (min. 3 visits), with summary tables
-- Top traps by catches
+- Best traps by catch rate (min. 3 visits), with summary table
 - Trap status breakdown (bait OK / bad / missing / sprung)
 
 Dates throughout the report and graphs are shown in dd/mm/yyyy format.

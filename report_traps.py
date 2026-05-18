@@ -11,8 +11,7 @@ Analysis flags (combine freely; omit all to include everything):
     --species              Catches by species
     --over-time            Catches per week over time
     --species-over-time    Catches per week broken down by species
-    --top-traps            Top traps by total catches
-    --catch-rates          Best and worst traps by catch rate
+    --catch-rates          Best traps by catch rate
     --status               Trap status distribution
 """
 
@@ -88,11 +87,6 @@ def compute_stats(df: pd.DataFrame) -> dict:
         .dropna()
         .value_counts()
     )
-    top_traps = (
-        df.groupby("code")["strikes"].sum().sort_values(ascending=False).head(10)
-    )
-    top_traps = top_traps[top_traps > 0]
-
     status_counts = df["status"].value_counts()
 
     by_trap = df.groupby("code").agg(
@@ -110,7 +104,6 @@ def compute_stats(df: pd.DataFrame) -> dict:
         "date_min": df["date"].min(),
         "date_max": df["date"].max(),
         "species": species,
-        "top_traps": top_traps,
         "status": status_counts,
         "by_trap_rate": by_trap,
     }
@@ -208,19 +201,6 @@ def plot_catch_rates(by_trap: pd.DataFrame) -> io.BytesIO:
     return _fig_to_buf(fig)
 
 
-def plot_top_traps(top: pd.Series) -> io.BytesIO:
-    fig, ax = plt.subplots()
-    if top.empty:
-        ax.text(0.5, 0.5, "No catches recorded", ha="center", va="center")
-        ax.set_axis_off()
-    else:
-        t = top.sort_values()
-        ax.barh(t.index, t.values, color="#3b6ea2")
-        for i, v in enumerate(t.values):
-            ax.text(v, i, f" {v}", va="center")
-        ax.set_xlabel("Catches")
-        ax.set_title(f"Top {len(t)} traps by catches")
-    return _fig_to_buf(fig)
 
 
 def plot_status(status: pd.Series) -> io.BytesIO:
@@ -234,7 +214,7 @@ def plot_status(status: pd.Series) -> io.BytesIO:
     return _fig_to_buf(fig)
 
 
-ALL_ANALYSES = {"species", "over_time", "species_over_time", "catch_rates", "top_traps", "status"}
+ALL_ANALYSES = {"species", "over_time", "species_over_time", "catch_rates", "status"}
 
 
 def make_plots(df: pd.DataFrame, stats: dict, selected: set[str]) -> dict:
@@ -243,7 +223,6 @@ def make_plots(df: pd.DataFrame, stats: dict, selected: set[str]) -> dict:
         "over_time":         lambda: plot_over_time(df),
         "species_over_time": lambda: plot_species_over_time(df),
         "catch_rates":       lambda: plot_catch_rates(stats["by_trap_rate"]),
-        "top_traps":         lambda: plot_top_traps(stats["top_traps"]),
         "status":            lambda: plot_status(stats["status"]),
     }
     return {key: fn() for key, fn in builders.items() if key in selected}
@@ -332,7 +311,6 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path) -> Non
         ("over_time",         "Catches over time",             True),
         ("species_over_time", "Catches over time by species",  True),
         ("catch_rates",       "Trap catch rates",              True),
-        ("top_traps",         "Top traps by total catches",    True),
         ("status",            "Trap status",                   False),
     ]
 
@@ -414,10 +392,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     analysis_group.add_argument(
         "--catch-rates", action="store_true",
-        help=f"Best and worst traps by catch rate (min. {CATCH_RATE_MIN_VISITS} visits)"
-    )
-    analysis_group.add_argument(
-        "--top-traps", action="store_true", help="Top traps by total catches"
+        help=f"Best traps by catch rate (min. {CATCH_RATE_MIN_VISITS} visits)"
     )
     analysis_group.add_argument(
         "--status", action="store_true", help="Trap status distribution"
@@ -437,7 +412,6 @@ def main(argv: list[str] | None = None) -> int:
             ("over_time",         args.over_time),
             ("species_over_time", args.species_over_time),
             ("catch_rates",       args.catch_rates),
-            ("top_traps",         args.top_traps),
             ("status",            args.status),
         ]
         if flag
