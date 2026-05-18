@@ -12,6 +12,7 @@ Analysis flags (combine freely; omit all to include everything):
     --over-time            Catches per week over time
     --species-over-time    Catches per week broken down by species
     --catch-rates          Best traps by catch rate
+    --sprung               Most frequently sprung traps with no catch
     --status               Trap status distribution
 """
 
@@ -203,6 +204,29 @@ def plot_catch_rates(by_trap: pd.DataFrame) -> io.BytesIO:
 
 
 
+def plot_sprung_no_catch(df: pd.DataFrame) -> io.BytesIO:
+    sprung = (
+        df[(df["status"] == "Sprung") & (df["strikes"] == 0)]
+        .groupby("code")
+        .size()
+        .sort_values(ascending=False)
+        .head(20)
+    )
+    fig, ax = plt.subplots()
+    if sprung.empty:
+        ax.text(0.5, 0.5, "No sprung-with-no-catch visits recorded",
+                ha="center", va="center")
+        ax.set_axis_off()
+    else:
+        s = sprung.sort_values()
+        ax.barh(s.index, s.values, color="#b07d3b")
+        for i, v in enumerate(s.values):
+            ax.text(v, i, f" {v}", va="center")
+        ax.set_xlabel("Times found sprung with no catch")
+        ax.set_title("Most frequently sprung traps (no catch)")
+    return _fig_to_buf(fig)
+
+
 def plot_status(status: pd.Series) -> io.BytesIO:
     fig, ax = plt.subplots()
     s = status.sort_values()
@@ -214,7 +238,7 @@ def plot_status(status: pd.Series) -> io.BytesIO:
     return _fig_to_buf(fig)
 
 
-ALL_ANALYSES = {"species", "over_time", "species_over_time", "catch_rates", "status"}
+ALL_ANALYSES = {"species", "over_time", "species_over_time", "catch_rates", "sprung", "status"}
 
 
 def make_plots(df: pd.DataFrame, stats: dict, selected: set[str]) -> dict:
@@ -223,6 +247,7 @@ def make_plots(df: pd.DataFrame, stats: dict, selected: set[str]) -> dict:
         "over_time":         lambda: plot_over_time(df),
         "species_over_time": lambda: plot_species_over_time(df),
         "catch_rates":       lambda: plot_catch_rates(stats["by_trap_rate"]),
+        "sprung":            lambda: plot_sprung_no_catch(df),
         "status":            lambda: plot_status(stats["status"]),
     }
     return {key: fn() for key, fn in builders.items() if key in selected}
@@ -311,6 +336,7 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path) -> Non
         ("over_time",         "Catches over time",             True),
         ("species_over_time", "Catches over time by species",  True),
         ("catch_rates",       "Trap catch rates",              True),
+        ("sprung",            "Frequently sprung traps",       True),
         ("status",            "Trap status",                   False),
     ]
 
@@ -395,6 +421,10 @@ def main(argv: list[str] | None = None) -> int:
         help=f"Best traps by catch rate (min. {CATCH_RATE_MIN_VISITS} visits)"
     )
     analysis_group.add_argument(
+        "--sprung", action="store_true",
+        help="Most frequently sprung traps with no catch"
+    )
+    analysis_group.add_argument(
         "--status", action="store_true", help="Trap status distribution"
     )
 
@@ -412,6 +442,7 @@ def main(argv: list[str] | None = None) -> int:
             ("over_time",         args.over_time),
             ("species_over_time", args.species_over_time),
             ("catch_rates",       args.catch_rates),
+            ("sprung",            args.sprung),
             ("status",            args.status),
         ]
         if flag
