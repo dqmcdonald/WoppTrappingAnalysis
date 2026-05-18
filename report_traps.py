@@ -28,6 +28,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -147,12 +148,20 @@ def plot_over_time(df: pd.DataFrame) -> io.BytesIO:
         .sum()
     )
     fig, ax = plt.subplots()
-    ax.plot(weekly.index, weekly.values, marker="o", color="#a23b3b")
+    ax.plot(weekly.index, weekly.values, marker="o", color="#a23b3b", label="Weekly catches")
     ax.fill_between(weekly.index, weekly.values, alpha=0.15, color="#a23b3b")
+
+    x_num = mdates.date2num(weekly.index.to_pydatetime())
+    coeffs = np.polyfit(x_num, weekly.values, 1)
+    trend = np.poly1d(coeffs)(x_num)
+    ax.plot(weekly.index, trend, linestyle="--", linewidth=1.0, color="#555555",
+            alpha=0.8, label="Trend")
+
     ax.set_ylabel("Catches")
     ax.set_xlabel("Week starting")
     ax.set_title("Catches per week")
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m/%Y"))
+    ax.legend(fontsize=8)
     fig.autofmt_xdate()
     return _fig_to_buf(fig)
 
