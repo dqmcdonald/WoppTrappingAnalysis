@@ -75,6 +75,7 @@ def load_visits(path: Path) -> pd.DataFrame:
     df["species caught"] = df["species caught"].replace(
         {alias: "Rat" for alias in RAT_ALIASES}
     )
+    df["code"] = df["code"].str.replace(r"\s*\(retired\)", "", regex=True, case=False)
     return df
 
 
@@ -379,10 +380,17 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path, top_n:
         leftMargin=0.7 * inch,
         rightMargin=0.7 * inch,
         topMargin=0.6 * inch,
-        bottomMargin=0.6 * inch,
+        bottomMargin=0.7 * inch,
         title=f"Trap report — {source_name}",
     )
-    doc.build(story)
+    def _add_page_number(canvas, doc):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(colors.grey)
+        canvas.drawCentredString(A4[0] / 2, 0.35 * inch, f"Page {doc.page}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_add_page_number, onLaterPages=_add_page_number)
 
 
 # ---------- pipeline ----------
