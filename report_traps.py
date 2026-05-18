@@ -46,7 +46,7 @@ from reportlab.platypus import (
 PLOT_DPI = 150
 PLOT_W_IN, PLOT_H_IN = 6.5, 4.0
 CATCH_RATE_MIN_VISITS = 3
-CATCH_RATE_N = 10
+DEFAULT_TOP_N = 20
 
 plt.style.use("seaborn-v0_8")
 plt.rcParams.update(
@@ -183,7 +183,7 @@ def plot_species_over_time(df: pd.DataFrame) -> io.BytesIO:
     return _fig_to_buf(fig)
 
 
-def plot_catch_rates(by_trap: pd.DataFrame) -> io.BytesIO:
+def plot_catch_rates(by_trap: pd.DataFrame, top_n: int) -> io.BytesIO:
     fig, ax = plt.subplots()
 
     if by_trap.empty:
@@ -191,7 +191,7 @@ def plot_catch_rates(by_trap: pd.DataFrame) -> io.BytesIO:
                 ha="center", va="center")
         ax.set_axis_off()
     else:
-        n = min(CATCH_RATE_N, len(by_trap))
+        n = min(top_n, len(by_trap))
         best = by_trap.nlargest(n, "rate").sort_values("rate")
         ax.barh(best.index, best["rate"], color="#3b6ea2")
         for i, (rate, visits) in enumerate(zip(best["rate"], best["visits"])):
@@ -204,13 +204,13 @@ def plot_catch_rates(by_trap: pd.DataFrame) -> io.BytesIO:
 
 
 
-def plot_sprung_no_catch(df: pd.DataFrame) -> io.BytesIO:
+def plot_sprung_no_catch(df: pd.DataFrame, top_n: int) -> io.BytesIO:
     sprung = (
         df[(df["status"] == "Sprung") & (df["strikes"] == 0)]
         .groupby("code")
         .size()
         .sort_values(ascending=False)
-        .head(20)
+        .head(top_n)
     )
     fig, ax = plt.subplots()
     if sprung.empty:
@@ -223,7 +223,7 @@ def plot_sprung_no_catch(df: pd.DataFrame) -> io.BytesIO:
         for i, v in enumerate(s.values):
             ax.text(v, i, f" {v}", va="center")
         ax.set_xlabel("Times found sprung with no catch")
-        ax.set_title("Most frequently sprung traps (no catch)")
+        ax.set_title(f"Top {len(s)} most frequently sprung traps (no catch)")
     return _fig_to_buf(fig)
 
 
@@ -241,13 +241,13 @@ def plot_status(status: pd.Series) -> io.BytesIO:
 ALL_ANALYSES = {"species", "over_time", "species_over_time", "catch_rates", "sprung", "status"}
 
 
-def make_plots(df: pd.DataFrame, stats: dict, selected: set[str]) -> dict:
+def make_plots(df: pd.DataFrame, stats: dict, selected: set[str], top_n: int) -> dict:
     builders = {
         "species":           lambda: plot_species(stats["species"]),
         "over_time":         lambda: plot_over_time(df),
         "species_over_time": lambda: plot_species_over_time(df),
-        "catch_rates":       lambda: plot_catch_rates(stats["by_trap_rate"]),
-        "sprung":            lambda: plot_sprung_no_catch(df),
+        "catch_rates":       lambda: plot_catch_rates(stats["by_trap_rate"], top_n),
+        "sprung":            lambda: plot_sprung_no_catch(df, top_n),
         "status":            lambda: plot_status(stats["status"]),
     }
     return {key: fn() for key, fn in builders.items() if key in selected}
@@ -295,7 +295,7 @@ def _grid_table(header: list[str], rows: list[list[str]]) -> Table:
     return t
 
 
-def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path) -> None:
+def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path, top_n: int) -> None:
     styles = getSampleStyleSheet()
     h1 = styles["Heading1"]
     h2 = styles["Heading2"]
@@ -354,7 +354,7 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path) -> Non
         if key == "catch_rates":
             bt = stats["by_trap_rate"]
             if not bt.empty:
-                n = min(CATCH_RATE_N, len(bt))
+                n = min(top_n, len(bt))
                 best = bt.nlargest(n, "rate").sort_values("rate", ascending=False)
                 story.append(Spacer(1, 0.1 * inch))
                 story.append(_grid_table(
@@ -381,12 +381,12 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path) -> Non
 # ---------- pipeline ----------
 
 
-def process(csv_path: Path, selected: set[str]) -> Path:
+def process(csv_path: Path, selected: set[str], top_n: int) -> Path:
     df = load_visits(csv_path)
     stats = compute_stats(df)
-    plots = make_plots(df, stats, selected)
+    plots = make_plots(df, stats, selected, top_n)
     out_path = csv_path.with_name(f"{csv_path.stem}_report.pdf")
-    build_pdf(stats, plots, csv_path.name, out_path)
+    build_pdf(stats, plots, csv_path.name, out_path, top_n)
     return out_path
 
 
@@ -418,11 +418,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     analysis_group.add_argument(
         "--catch-rates", action="store_true",
-        help=f"Best traps by catch rate (min. {CATCH_RATE_MIN_VISITS} visits)"
+        help=f"Top-N traps by catch rate (min. {CATCH_RATE_MIN_VISITS} visits)"
     )
     analysis_group.add_argument(
         "--sprung", action="store_true",
         help="Most frequently sprung traps with no catch"
+    )
+    p.add_argument(
+        "--top-n", type=int, default=DEFAULT_TOP_N, metavar="N",
+        help=f"Number of top traps to show in catch-rate and sprung analyses (default: {DEFAULT_TOP_N})"
     )
     analysis_group.add_argument(
         "--status", action="store_true", help="Trap status distribution"
@@ -462,7 +466,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for path in paths:
         try:
-            out = process(path, selected)
+            out = process(path, selected, args.top_n)
         except Exception as e:
             print(f"FAILED {path}: {e}", file=sys.stderr)
             return 2
