@@ -190,37 +190,22 @@ def plot_species_over_time(df: pd.DataFrame) -> io.BytesIO:
 
 
 def plot_catch_rates(by_trap: pd.DataFrame) -> io.BytesIO:
-    fig, (ax_best, ax_worst) = plt.subplots(1, 2)
+    fig, ax = plt.subplots()
 
     if by_trap.empty:
-        for ax in (ax_best, ax_worst):
-            ax.text(0.5, 0.5, f"No traps with ≥{CATCH_RATE_MIN_VISITS} visits",
-                    ha="center", va="center")
-            ax.set_axis_off()
-        return _fig_to_buf(fig)
-
-    n = min(CATCH_RATE_N, len(by_trap))
-    best = by_trap.nlargest(n, "rate").sort_values("rate")
-    # Sort worst so lowest rate (most problematic) is at the top of the chart
-    worst = (
-        by_trap.sort_values(["rate", "visits"], ascending=[True, False])
-        .head(n)
-        .sort_values("rate", ascending=False)
-    )
-
-    for ax, data, color, title in (
-        (ax_best,  best,  "#3b6ea2", f"Best {n}"),
-        (ax_worst, worst, "#a23b3b", f"Worst {n}"),
-    ):
-        ax.barh(data.index, data["rate"], color=color)
-        for i, (rate, visits) in enumerate(zip(data["rate"], data["visits"])):
-            ax.text(max(rate, 0.3), i, f" {rate:.1f}% ({int(visits)}v)",
-                    va="center", fontsize=7)
+        ax.text(0.5, 0.5, f"No traps with ≥{CATCH_RATE_MIN_VISITS} visits",
+                ha="center", va="center")
+        ax.set_axis_off()
+    else:
+        n = min(CATCH_RATE_N, len(by_trap))
+        best = by_trap.nlargest(n, "rate").sort_values("rate")
+        ax.barh(best.index, best["rate"], color="#3b6ea2")
+        for i, (rate, visits) in enumerate(zip(best["rate"], best["visits"])):
+            ax.text(rate, i, f" {rate:.1f}% ({int(visits)}v)", va="center", fontsize=8)
         ax.set_xlabel("Catch rate (%)")
-        ax.set_title(title)
+        ax.set_title(f"Top {n} traps by catch rate (min. {CATCH_RATE_MIN_VISITS} visits)")
 
-    fig.suptitle(f"Trap catch rates (min. {CATCH_RATE_MIN_VISITS} visits)")
-    return _fig_to_buf(fig, tight=False)
+    return _fig_to_buf(fig)
 
 
 def plot_top_traps(top: pd.Series) -> io.BytesIO:
@@ -367,22 +352,11 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path) -> Non
             if not bt.empty:
                 n = min(CATCH_RATE_N, len(bt))
                 best = bt.nlargest(n, "rate").sort_values("rate", ascending=False)
-                worst = (
-                    bt.sort_values(["rate", "visits"], ascending=[True, False]).head(n)
-                )
                 story.append(Spacer(1, 0.1 * inch))
-                story.append(Paragraph(f"Best {n} traps by catch rate", h2))
                 story.append(_grid_table(
                     ["Trap", "Visits", "Catches", "Rate"],
                     [[t, str(int(r.visits)), str(int(r.catches)), f"{r.rate:.1f}%"]
                      for t, r in best.iterrows()],
-                ))
-                story.append(Spacer(1, 0.15 * inch))
-                story.append(Paragraph(f"Worst {n} traps by catch rate", h2))
-                story.append(_grid_table(
-                    ["Trap", "Visits", "Catches", "Rate"],
-                    [[t, str(int(r.visits)), str(int(r.catches)), f"{r.rate:.1f}%"]
-                     for t, r in worst.iterrows()],
                 ))
 
         if page_break_after:
