@@ -205,25 +205,32 @@ def plot_catch_rates(by_trap: pd.DataFrame, top_n: int) -> io.BytesIO:
 
 
 def plot_sprung_no_catch(df: pd.DataFrame, top_n: int) -> io.BytesIO:
-    sprung = (
+    visits = df.groupby("code").size().rename("visits")
+    sprung_count = (
         df[(df["status"] == "Sprung") & (df["strikes"] == 0)]
         .groupby("code")
         .size()
-        .sort_values(ascending=False)
-        .head(top_n)
+        .rename("sprung")
     )
+    by_trap = pd.concat([visits, sprung_count], axis=1).fillna(0)
+    by_trap["rate"] = by_trap["sprung"] / by_trap["visits"] * 100
+    top = by_trap.nlargest(top_n, "rate")
+
     fig, ax = plt.subplots()
-    if sprung.empty:
+    if top.empty or top["sprung"].sum() == 0:
         ax.text(0.5, 0.5, "No sprung-with-no-catch visits recorded",
                 ha="center", va="center")
         ax.set_axis_off()
     else:
-        s = sprung.sort_values()
-        ax.barh(s.index, s.values, color="#b07d3b")
-        for i, v in enumerate(s.values):
-            ax.text(v, i, f" {v}", va="center")
-        ax.set_xlabel("Times found sprung with no catch")
-        ax.set_title(f"Top {len(s)} most frequently sprung traps (no catch)")
+        s = top.sort_values("rate")
+        ax.barh(s.index, s["rate"], color="#b07d3b")
+        for i, (rate, sprung, visits) in enumerate(
+            zip(s["rate"], s["sprung"], s["visits"])
+        ):
+            ax.text(rate, i, f" {rate:.1f}% ({int(sprung)}/{int(visits)})",
+                    va="center", fontsize=8)
+        ax.set_xlabel("% of visits found sprung with no catch")
+        ax.set_title(f"Top {len(s)} traps most often sprung with no catch")
     return _fig_to_buf(fig)
 
 
