@@ -6,17 +6,30 @@ Data is exported from [Trap.NZ](https://trap.nz) in their standard CSV format.
 
 ## Requirements
 
-Python 3.12 with the following packages:
+Python 3.12, plus the packages listed in `requirements.txt`.
 
-- pandas
-- matplotlib
-- numpy
-- reportlab
+### Option A — uv (recommended, no setup needed)
 
-Install dependencies:
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) once:
 
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh   # macOS / Linux
+# or: winget install astral-sh.uv                  # Windows
 ```
-pip install reportlab
+
+Then just run the script — `uv` reads the inline dependency block and handles everything automatically:
+
+```bash
+uv run report_traps.py traps.csv
+```
+
+### Option B — pip + venv (traditional)
+
+```bash
+python -m venv .venv
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+python report_traps.py traps.csv
 ```
 
 ## Usage

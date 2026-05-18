@@ -1,4 +1,13 @@
 #!/usr/bin/env python
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#   "matplotlib",
+#   "numpy",
+#   "pandas",
+#   "reportlab",
+# ]
+# ///
 """Generate a styled PDF report from a Trap.NZ visit-log CSV.
 
 Usage:
