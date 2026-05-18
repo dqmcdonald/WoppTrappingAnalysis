@@ -1,9 +1,6 @@
 # Wopp Trapping Analysis
 
-Analysis of pest-trapping data from two trap networks on Banks Peninsula, New Zealand:
-
-- **Diamond Harbour Coastal** — D-Rat, DOC 200, Trapinator, and Mouse traps along the coastal route (trap codes `DH*`)
-- **Stoddart Point** — traps arranged in lines `TL1`, `TL2`, ... (trap codes `SP*`)
+Analysis of pest-trapping data from trap networks around Whakaraupoū/Lyttleton Harbour, New Zealand.
 
 Data is exported from [Trap.NZ](https://trap.nz) in their standard CSV format.
 
@@ -26,7 +23,7 @@ Install reportlab if not already present:
 
 ```bash
 # Report for a single CSV
-/Users/que/venvs/tf/bin/python report_traps.py DHCoastal.csv
+/Users/que/venvs/tf/bin/python report_traps.py traps.csv
 
 # Report for every *.csv in the current directory
 /Users/que/venvs/tf/bin/python report_traps.py -a
@@ -44,4 +41,4 @@ Each PDF includes:
 - Catches over time (weekly)
 - Top traps by catches
 - Trap status breakdown (bait OK / bad / missing / sprung)
-- Per trap-line breakdown *(Stoddart Point only)*
+- Per trap-line breakdown *(only rendered when trap lines are present in the data)*
