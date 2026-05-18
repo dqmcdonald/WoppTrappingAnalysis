@@ -2,19 +2,24 @@
 """Generate a styled PDF report from a Trap.NZ visit-log CSV.
 
 Usage:
-    report_traps.py <csv>                  # all analyses -> <stem>_report.pdf
-    report_traps.py -a                     # every *.csv in cwd
-    report_traps.py <csv> --species        # only species breakdown
-    report_traps.py <csv> --species --over-time  # two analyses
+    report_traps.py <csv>                       # all analyses -> <stem>_report.pdf
+    report_traps.py -a                          # every *.csv in cwd
+    report_traps.py <csv> --species             # single analysis
+    report_traps.py <csv> --catch-rates --top-n 10  # top 10 by catch rate
 
 Analysis flags (combine freely; omit all to include everything):
     --species              Catches by species
-    --over-time            Catches per week over time
+    --over-time            Catches per week over time (with linear trend)
     --species-over-time    Catches per week broken down by species
-    --catch-rates          Best traps by catch rate
-    --inter-catch          Box plot of days between catches for top-N traps
-    --sprung               Most frequently sprung traps with no catch
+    --catch-rates          Top-N traps by catch rate (min. 3 visits)
+    --inter-catch          Inter-catch interval box plot for top-N traps
+    --sprung               Top-N traps most often found sprung with no catch
     --status               Trap status distribution
+
+Other options:
+    --top-n N              Number of traps shown in catch-rates, inter-catch,
+                           and sprung analyses (default: 20)
+    -a, --all              Process every *.csv in the current directory
 """
 
 import argparse
