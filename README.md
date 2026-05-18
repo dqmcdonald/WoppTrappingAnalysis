@@ -6,27 +6,27 @@ Data is exported from [Trap.NZ](https://trap.nz) in their standard CSV format.
 
 ## Requirements
 
-Uses the `tf` virtualenv (`/Users/que/venvs/tf`) with Python 3.12 and the following packages:
+Python 3.12 with the following packages:
 
 - pandas
 - matplotlib
 - numpy
 - reportlab
 
-Install reportlab if not already present:
+Install dependencies:
 
 ```
-/Users/que/venvs/tf/bin/pip install reportlab
+pip install reportlab
 ```
 
 ## Usage
 
 ```bash
 # Report for a single CSV
-/Users/que/venvs/tf/bin/python report_traps.py traps.csv
+python report_traps.py traps.csv
 
 # Report for every *.csv in the current directory
-/Users/que/venvs/tf/bin/python report_traps.py -a
+python report_traps.py -a
 ```
 
 Output is written as `<csvname>_report.pdf` alongside each input file.
