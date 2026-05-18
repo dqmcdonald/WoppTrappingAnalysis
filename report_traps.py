@@ -12,6 +12,7 @@ Analysis flags (combine freely; omit all to include everything):
     --over-time            Catches per week over time
     --species-over-time    Catches per week broken down by species
     --catch-rates          Best traps by catch rate
+    --inter-catch          Box plot of days between catches for top-N traps
     --sprung               Most frequently sprung traps with no catch
     --status               Trap status distribution
 """
@@ -193,6 +194,45 @@ def plot_species_over_time(df: pd.DataFrame) -> io.BytesIO:
     return _fig_to_buf(fig)
 
 
+def inter_catch_fig_height(n: int) -> float:
+    return max(PLOT_H_IN, 0.35 * n + 1.0)
+
+
+def plot_inter_catch_interval(df: pd.DataFrame, by_trap: pd.DataFrame, top_n: int) -> io.BytesIO:
+    n = min(top_n, len(by_trap))
+    top_codes = by_trap.nlargest(n, "rate").index.tolist()
+
+    intervals: dict[str, list[float]] = {}
+    for code in top_codes:
+        catches = (
+            df[(df["code"] == code) & (df["strikes"] > 0)]
+            .sort_values("date")["date"]
+        )
+        if len(catches) >= 2:
+            diffs = catches.diff().dropna().dt.days.tolist()
+            intervals[code] = diffs
+
+    fig_h = inter_catch_fig_height(len(intervals))
+    fig, ax = plt.subplots(figsize=(PLOT_W_IN, fig_h))
+
+    if not intervals:
+        ax.text(0.5, 0.5, "Insufficient repeat-catch data for interval analysis",
+                ha="center", va="center")
+        ax.set_axis_off()
+    else:
+        sorted_codes = sorted(intervals, key=lambda c: float(np.median(intervals[c])))
+        ax.boxplot(
+            [intervals[c] for c in sorted_codes],
+            tick_labels=sorted_codes,
+            vert=False,
+            flierprops=dict(marker="o", markersize=3),
+        )
+        ax.set_xlabel("Days between consecutive catches")
+        ax.set_title(f"Inter-catch interval — top {len(intervals)} traps by catch rate")
+
+    return _fig_to_buf(fig)
+
+
 def plot_catch_rates(by_trap: pd.DataFrame, top_n: int) -> io.BytesIO:
     fig, ax = plt.subplots()
 
@@ -255,7 +295,7 @@ def plot_status(status: pd.Series) -> io.BytesIO:
     return _fig_to_buf(fig)
 
 
-ALL_ANALYSES = {"species", "over_time", "species_over_time", "catch_rates", "sprung", "status"}
+ALL_ANALYSES = {"species", "over_time", "species_over_time", "catch_rates", "inter_catch", "sprung", "status"}
 
 
 def make_plots(df: pd.DataFrame, stats: dict, selected: set[str], top_n: int) -> dict:
@@ -264,6 +304,7 @@ def make_plots(df: pd.DataFrame, stats: dict, selected: set[str], top_n: int) ->
         "over_time":         lambda: plot_over_time(df),
         "species_over_time": lambda: plot_species_over_time(df),
         "catch_rates":       lambda: plot_catch_rates(stats["by_trap_rate"], top_n),
+        "inter_catch":       lambda: plot_inter_catch_interval(df, stats["by_trap_rate"], top_n),
         "sprung":            lambda: plot_sprung_no_catch(df, top_n),
         "status":            lambda: plot_status(stats["status"]),
     }
@@ -273,8 +314,8 @@ def make_plots(df: pd.DataFrame, stats: dict, selected: set[str], top_n: int) ->
 # ---------- pdf ----------
 
 
-def _img(buf: io.BytesIO) -> Image:
-    return Image(buf, width=PLOT_W_IN * inch, height=PLOT_H_IN * inch)
+def _img(buf: io.BytesIO, height: float = PLOT_H_IN) -> Image:
+    return Image(buf, width=PLOT_W_IN * inch, height=height * inch)
 
 
 def _kv_table(rows: list[tuple[str, str]]) -> Table:
@@ -353,6 +394,7 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path, top_n:
         ("over_time",         "Catches over time",             True),
         ("species_over_time", "Catches over time by species",  True),
         ("catch_rates",       "Trap catch rates",              True),
+        ("inter_catch",       "Inter-catch interval",          True),
         ("sprung",            "Frequently sprung traps",       True),
         ("status",            "Trap status",                   False),
     ]
@@ -361,7 +403,11 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path, top_n:
         if key not in plots:
             continue
         story.append(Paragraph(heading, h2))
-        story.append(_img(plots[key]))
+        if key == "inter_catch":
+            n_boxes = min(top_n, len(stats["by_trap_rate"]))
+            story.append(_img(plots[key], height=inter_catch_fig_height(n_boxes)))
+        else:
+            story.append(_img(plots[key]))
 
         if key == "species" and not stats["species"].empty:
             rows = [[sp, str(int(n))] for sp, n in stats["species"].items()]
@@ -445,6 +491,10 @@ def main(argv: list[str] | None = None) -> int:
         help=f"Top-N traps by catch rate (min. {CATCH_RATE_MIN_VISITS} visits)"
     )
     analysis_group.add_argument(
+        "--inter-catch", action="store_true",
+        help="Box plot of days between catches for top-N traps by catch rate"
+    )
+    analysis_group.add_argument(
         "--sprung", action="store_true",
         help="Most frequently sprung traps with no catch"
     )
@@ -470,6 +520,7 @@ def main(argv: list[str] | None = None) -> int:
             ("over_time",         args.over_time),
             ("species_over_time", args.species_over_time),
             ("catch_rates",       args.catch_rates),
+            ("inter_catch",       args.inter_catch),
             ("sprung",            args.sprung),
             ("status",            args.status),
         ]
