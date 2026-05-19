@@ -495,6 +495,19 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path, top_n:
             story.append(Spacer(1, 0.1 * inch))
             story.append(_grid_table(["Species", "Catches"], rows))
 
+        if key == "inter_catch":
+            story.append(Spacer(1, 0.1 * inch))
+            story.append(Paragraph(
+                "Each box shows the distribution of days between consecutive catches "
+                "for that trap, based on the top-performing traps by catch rate. "
+                "The box spans the interquartile range (25th to 75th percentile), "
+                "the line inside is the median, and the whiskers extend to the most "
+                "extreme values within 1.5× the interquartile range. Points beyond "
+                "the whiskers are outliers. Traps are ordered by median interval, "
+                "with the most frequently catching traps at the top.",
+                small,
+            ))
+
         if key == "catch_concentration":
             story.append(Spacer(1, 0.1 * inch))
             story.append(Paragraph(
