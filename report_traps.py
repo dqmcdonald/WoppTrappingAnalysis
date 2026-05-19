@@ -306,31 +306,32 @@ def plot_inter_catch_interval(df: pd.DataFrame, by_trap: pd.DataFrame, top_n: in
 
 
 def plot_catch_concentration(df: pd.DataFrame) -> io.BytesIO:
-    catches = df[df["strikes"] > 0].copy()
-    catches["species caught"] = catches["species caught"].replace({"None": pd.NA, "": pd.NA})
-    catches = catches.dropna(subset=["species caught"])
-
     fig, ax = plt.subplots()
-    if catches.empty:
+    trap_types = sorted(df["trap type"].dropna().unique())
+    has_data = False
+    for trap_type in trap_types:
+        by_trap = (
+            df[df["trap type"] == trap_type]
+            .groupby("code")["strikes"]
+            .sum()
+            .sort_values(ascending=False)
+        )
+        if by_trap.sum() == 0:
+            continue
+        has_data = True
+        x = np.arange(1, len(by_trap) + 1) / len(by_trap) * 100
+        y = by_trap.cumsum() / by_trap.sum() * 100
+        ax.plot(x, y.values, label=trap_type)
+
+    if not has_data:
         ax.text(0.5, 0.5, "No catches recorded", ha="center", va="center")
         ax.set_axis_off()
     else:
-        for species in sorted(catches["species caught"].unique()):
-            by_trap = (
-                catches[catches["species caught"] == species]
-                .groupby("code")["strikes"]
-                .sum()
-                .sort_values(ascending=False)
-            )
-            x = np.arange(1, len(by_trap) + 1) / len(by_trap) * 100
-            y = by_trap.cumsum() / by_trap.sum() * 100
-            ax.plot(x, y.values, label=species)
-
         ax.axhline(80, linestyle="--", linewidth=0.75, color="#555555",
                    alpha=0.7, label="80%")
         ax.set_xlabel("% of traps (ranked by catches, highest first)")
         ax.set_ylabel("Cumulative % of catches")
-        ax.set_title("Cumulative catch distribution by species")
+        ax.set_title("Cumulative catch distribution by trap type")
         ax.set_xlim(0, 100)
         ax.set_ylim(0, 100)
         ax.legend(fontsize=8)
@@ -540,13 +541,13 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path, top_n:
         if key == "catch_concentration":
             story.append(Spacer(1, 0.1 * inch))
             story.append(Paragraph(
-                "Each curve shows what percentage of total catches for a species are "
-                "accounted for by a given percentage of traps, with traps ranked from "
-                "highest to lowest catching. A curve that rises steeply indicates that "
+                "Each curve shows what percentage of total catches for a trap type are "
+                "accounted for by a given percentage of traps of that type, with traps ranked "
+                "from highest to lowest catching. A curve that rises steeply indicates that "
                 "catches are concentrated in a small number of traps; a curve closer to "
                 "the diagonal indicates catches are spread more evenly across the network. "
                 "The dashed line marks the 80% level — where a curve crosses this line "
-                "shows what proportion of traps accounts for 80% of catches for that species.",
+                "shows what proportion of traps accounts for 80% of catches for that trap type.",
                 small,
             ))
 
