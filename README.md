@@ -50,6 +50,7 @@ python report_traps.py traps.csv --top-n 10
 # Available analysis flags (combine freely; omit all to include everything):
 #   --species              Catches by species
 #   --over-time            Catches per week over time (with linear trend line)
+#   --rate-over-time       Weekly catch rate (% of visits) over time
 #   --species-over-time    Catches per week broken down by species
 #   --cumulative           Cumulative catches over time by species
 #   --catch-rates          Top-N traps by catch rate (min. 3 visits)
@@ -70,6 +71,7 @@ Each PDF includes (subject to the analysis flags chosen):
 - Summary table (visits, traps, catches, catch rate, date range)
 - Catches by species
 - Catches over time (weekly, total) with a linear trend line
+- Catch rate over time (weekly catches as % of visits) with a linear trend line
 - Catches over time (weekly, broken down by species)
 - Cumulative catches over time by species
 - Top-N traps by catch rate (min. 3 visits), with summary table

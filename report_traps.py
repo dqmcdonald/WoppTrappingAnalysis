@@ -19,6 +19,7 @@ Usage:
 Analysis flags (combine freely; omit all to include everything):
     --species              Catches by species
     --over-time            Catches per week over time (with linear trend)
+    --rate-over-time       Weekly catch rate (% of visits) over time
     --species-over-time    Catches per week broken down by species
     --cumulative           Cumulative catches over time by species
     --catch-rates          Top-N traps by catch rate (min. 3 visits)
@@ -212,6 +213,32 @@ def plot_cumulative_catches(df: pd.DataFrame) -> io.BytesIO:
     return _fig_to_buf(fig)
 
 
+def plot_catch_rate_over_time(df: pd.DataFrame) -> io.BytesIO:
+    weekly = df.set_index("date").resample("W-MON", label="left", closed="left")
+    catches = weekly["strikes"].sum()
+    visits = weekly["strikes"].count()
+    mask = visits > 0
+    rate = catches[mask] / visits[mask] * 100
+
+    fig, ax = plt.subplots()
+    ax.plot(rate.index, rate.values, marker="o", color="#a23b3b", label="Weekly catch rate")
+    ax.fill_between(rate.index, rate.values, alpha=0.15, color="#a23b3b")
+
+    x_num = mdates.date2num(rate.index.to_pydatetime())
+    coeffs = np.polyfit(x_num, rate.values, 1)
+    trend = np.poly1d(coeffs)(x_num)
+    ax.plot(rate.index, trend, linestyle="--", linewidth=1.0, color="#555555",
+            alpha=0.8, label="Trend")
+
+    ax.set_ylabel("Catch rate (% of visits)")
+    ax.set_xlabel("Week starting")
+    ax.set_title("Weekly catch rate (catches as % of visits)")
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m/%Y"))
+    ax.legend(fontsize=8)
+    fig.autofmt_xdate()
+    return _fig_to_buf(fig)
+
+
 def plot_species_over_time(df: pd.DataFrame) -> io.BytesIO:
     catches = df[df["strikes"] > 0].copy()
     catches["species caught"] = catches["species caught"].replace({"None": pd.NA, "": pd.NA})
@@ -372,13 +399,14 @@ def plot_status(status: pd.Series) -> io.BytesIO:
     return _fig_to_buf(fig)
 
 
-ALL_ANALYSES = {"species", "over_time", "species_over_time", "cumulative", "catch_rates", "catch_concentration", "inter_catch", "sprung", "status"}
+ALL_ANALYSES = {"species", "over_time", "rate_over_time", "species_over_time", "cumulative", "catch_rates", "catch_concentration", "inter_catch", "sprung", "status"}
 
 
 def make_plots(df: pd.DataFrame, stats: dict, selected: set[str], top_n: int) -> dict:
     builders = {
         "species":           lambda: plot_species(stats["species"]),
         "over_time":         lambda: plot_over_time(df),
+        "rate_over_time":    lambda: plot_catch_rate_over_time(df),
         "species_over_time": lambda: plot_species_over_time(df),
         "cumulative":        lambda: plot_cumulative_catches(df),
         "catch_rates":       lambda: plot_catch_rates(stats["by_trap_rate"], top_n),
@@ -470,7 +498,8 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path, top_n:
 
     sections = [
         ("species",           "Catches by species",            False),
-        ("over_time",         "Catches over time",             True),
+        ("over_time",         "Catches over time",              True),
+        ("rate_over_time",    "Catch rate over time",           True),
         ("species_over_time", "Catches over time by species",   True),
         ("cumulative",        "Cumulative catches by species",  True),
         ("catch_rates",       "Trap catch rates",               True),
@@ -591,6 +620,10 @@ def main(argv: list[str] | None = None) -> int:
         "--over-time", action="store_true", help="Catches per week over time"
     )
     analysis_group.add_argument(
+        "--rate-over-time", action="store_true",
+        help="Weekly catch rate (catches as % of visits) over time"
+    )
+    analysis_group.add_argument(
         "--species-over-time", action="store_true", help="Catches per week broken down by species"
     )
     analysis_group.add_argument(
@@ -632,6 +665,7 @@ def main(argv: list[str] | None = None) -> int:
         for key, flag in [
             ("species",           args.species),
             ("over_time",         args.over_time),
+            ("rate_over_time",    args.rate_over_time),
             ("species_over_time", args.species_over_time),
             ("cumulative",        args.cumulative),
             ("catch_rates",       args.catch_rates),
