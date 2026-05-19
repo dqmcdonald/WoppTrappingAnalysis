@@ -26,6 +26,7 @@ Analysis flags (combine freely; omit all to include everything):
     --catch-concentration  Pareto curves by species: % of traps vs cumulative % of catches
     --inter-catch          Inter-catch interval box plot for top-N traps
     --sprung               Top-N traps most often found sprung with no catch
+    --bait-missing         Top-N traps most often found with bait missing
     --status               Trap status distribution
 
 Other options:
@@ -389,6 +390,36 @@ def plot_sprung_no_catch(df: pd.DataFrame, top_n: int) -> io.BytesIO:
     return _fig_to_buf(fig)
 
 
+def plot_bait_missing(df: pd.DataFrame, top_n: int) -> io.BytesIO:
+    visits = df.groupby("code").size().rename("visits")
+    bait_missing_count = (
+        df[df["status"] == "Still set, bait missing"]
+        .groupby("code")
+        .size()
+        .rename("bait_missing")
+    )
+    by_trap = pd.concat([visits, bait_missing_count], axis=1).fillna(0)
+    by_trap["rate"] = by_trap["bait_missing"] / by_trap["visits"] * 100
+    top = by_trap.nlargest(top_n, "rate")
+
+    fig, ax = plt.subplots()
+    if top.empty or top["bait_missing"].sum() == 0:
+        ax.text(0.5, 0.5, "No bait-missing visits recorded",
+                ha="center", va="center")
+        ax.set_axis_off()
+    else:
+        s = top.sort_values("rate")
+        ax.barh(s.index, s["rate"], color="#5a7a3b")
+        for i, (rate, bm, visits) in enumerate(
+            zip(s["rate"], s["bait_missing"], s["visits"])
+        ):
+            ax.text(rate, i, f" {rate:.1f}% ({int(bm)}/{int(visits)})",
+                    va="center", fontsize=8)
+        ax.set_xlabel("% of visits found with bait missing")
+        ax.set_title(f"Top {len(s)} traps most often found with bait missing")
+    return _fig_to_buf(fig)
+
+
 def plot_status(status: pd.Series) -> io.BytesIO:
     fig, ax = plt.subplots()
     s = status.sort_values()
@@ -400,7 +431,7 @@ def plot_status(status: pd.Series) -> io.BytesIO:
     return _fig_to_buf(fig)
 
 
-ALL_ANALYSES = {"species", "over_time", "rate_over_time", "species_over_time", "cumulative", "catch_rates", "catch_concentration", "inter_catch", "sprung", "status"}
+ALL_ANALYSES = {"species", "over_time", "rate_over_time", "species_over_time", "cumulative", "catch_rates", "catch_concentration", "inter_catch", "sprung", "bait_missing", "status"}
 
 
 def make_plots(df: pd.DataFrame, stats: dict, selected: set[str], top_n: int) -> dict:
@@ -414,6 +445,7 @@ def make_plots(df: pd.DataFrame, stats: dict, selected: set[str], top_n: int) ->
         "catch_concentration":   lambda: plot_catch_concentration(df),
         "inter_catch":       lambda: plot_inter_catch_interval(df, stats["by_trap_rate"], top_n),
         "sprung":            lambda: plot_sprung_no_catch(df, top_n),
+        "bait_missing":      lambda: plot_bait_missing(df, top_n),
         "status":            lambda: plot_status(stats["status"]),
     }
     return {key: fn() for key, fn in builders.items() if key in selected}
@@ -507,6 +539,7 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path, top_n:
         ("catch_concentration",   "Catch concentration",            True),
         ("inter_catch",       "Inter-catch interval",          True),
         ("sprung",            "Frequently sprung traps",       True),
+        ("bait_missing",      "Frequently bait-missing traps", True),
         ("status",            "Trap status",                   False),
     ]
 
@@ -646,6 +679,10 @@ def main(argv: list[str] | None = None) -> int:
         "--sprung", action="store_true",
         help="Most frequently sprung traps with no catch"
     )
+    analysis_group.add_argument(
+        "--bait-missing", action="store_true",
+        help="Most frequently bait-missing traps"
+    )
     p.add_argument(
         "--top-n", type=int, default=DEFAULT_TOP_N, metavar="N",
         help=f"Number of top traps to show in catch-rate and sprung analyses (default: {DEFAULT_TOP_N})"
@@ -673,6 +710,7 @@ def main(argv: list[str] | None = None) -> int:
             ("catch_concentration",   args.catch_concentration),
             ("inter_catch",       args.inter_catch),
             ("sprung",            args.sprung),
+            ("bait_missing",      args.bait_missing),
             ("status",            args.status),
         ]
         if flag
