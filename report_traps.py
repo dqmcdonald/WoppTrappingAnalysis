@@ -11,23 +11,23 @@
 """Generate a styled PDF report from a Trap.NZ visit-log CSV.
 
 Usage:
-    report_traps.py <csv>                       # all analyses -> <stem>_report.pdf
-    report_traps.py -a                          # every *.csv in cwd
-    report_traps.py <csv> --species             # single analysis
-    report_traps.py <csv> --catch-rates --top-n 10  # top 10 by catch rate
+    report_traps.py <csv>                          # all analyses -> <stem>_report.pdf
+    report_traps.py -a                             # every *.csv in cwd
+    report_traps.py <csv> --no-species             # all except species
+    report_traps.py <csv> --no-inter-catch --top-n 10  # top 10 by catch rate, skip inter-catch
 
-Analysis flags (combine freely; omit all to include everything):
-    --species              Catches by species
-    --over-time            Catches per week over time (with linear trend)
-    --rate-over-time       Weekly catch rate (% of visits) over time
-    --species-over-time    Catches per week broken down by species
-    --cumulative           Cumulative catches over time by species
-    --catch-rates          Top-N traps by catch rate (min. 3 visits)
-    --catch-concentration  Pareto curves by species: % of traps vs cumulative % of catches
-    --inter-catch          Inter-catch interval box plot for top-N traps
-    --sprung               Top-N traps most often found sprung with no catch
-    --bait-missing         Top-N traps most often found with bait missing
-    --status               Trap status distribution
+Analysis flags (all included by default; use --no-X to exclude):
+    --no-species              Exclude catches by species
+    --no-over-time            Exclude catches per week over time (with linear trend)
+    --no-rate-over-time       Exclude weekly catch rate (% of visits) over time
+    --no-species-over-time    Exclude catches per week broken down by species
+    --no-cumulative           Exclude cumulative catches over time by species
+    --no-catch-rates          Exclude top-N traps by catch rate (min. 3 visits)
+    --no-catch-concentration  Exclude Pareto curves by species: % of traps vs cumulative % of catches
+    --no-inter-catch          Exclude inter-catch interval box plot for top-N traps
+    --no-sprung               Exclude top-N traps most often found sprung with no catch
+    --no-bait-missing         Exclude top-N traps most often found with bait missing
+    --no-status               Exclude trap status distribution
 
 Other options:
     --top-n N              Number of traps shown in catch-rates, inter-catch,
@@ -645,50 +645,52 @@ def main(argv: list[str] | None = None) -> int:
 
     analysis_group = p.add_argument_group(
         "analyses",
-        "Select specific analyses to include (default: all)",
+        "All analyses are included by default; use --no-X to exclude one",
     )
     analysis_group.add_argument(
-        "--species", action="store_true", help="Catches by species"
+        "--no-species", action="store_true", help="Exclude catches by species"
     )
     analysis_group.add_argument(
-        "--over-time", action="store_true", help="Catches per week over time"
+        "--no-over-time", action="store_true", help="Exclude catches per week over time"
     )
     analysis_group.add_argument(
-        "--rate-over-time", action="store_true",
-        help="Weekly catch rate (catches as % of visits) over time"
+        "--no-rate-over-time", action="store_true",
+        help="Exclude weekly catch rate (catches as % of visits) over time"
     )
     analysis_group.add_argument(
-        "--species-over-time", action="store_true", help="Catches per week broken down by species"
+        "--no-species-over-time", action="store_true",
+        help="Exclude catches per week broken down by species"
     )
     analysis_group.add_argument(
-        "--cumulative", action="store_true", help="Cumulative catches over time by species"
+        "--no-cumulative", action="store_true",
+        help="Exclude cumulative catches over time by species"
     )
     analysis_group.add_argument(
-        "--catch-rates", action="store_true",
-        help=f"Top-N traps by catch rate (min. {CATCH_RATE_MIN_VISITS} visits)"
+        "--no-catch-rates", action="store_true",
+        help=f"Exclude top-N traps by catch rate (min. {CATCH_RATE_MIN_VISITS} visits)"
     )
     analysis_group.add_argument(
-        "--catch-concentration", action="store_true",
-        help="Pareto curves by species: % of traps vs cumulative % of catches"
+        "--no-catch-concentration", action="store_true",
+        help="Exclude Pareto curves by species: % of traps vs cumulative % of catches"
     )
     analysis_group.add_argument(
-        "--inter-catch", action="store_true",
-        help="Box plot of days between catches for top-N traps by catch rate"
+        "--no-inter-catch", action="store_true",
+        help="Exclude box plot of days between catches for top-N traps by catch rate"
     )
     analysis_group.add_argument(
-        "--sprung", action="store_true",
-        help="Most frequently sprung traps with no catch"
+        "--no-sprung", action="store_true",
+        help="Exclude most frequently sprung traps with no catch"
     )
     analysis_group.add_argument(
-        "--bait-missing", action="store_true",
-        help="Most frequently bait-missing traps"
+        "--no-bait-missing", action="store_true",
+        help="Exclude most frequently bait-missing traps"
+    )
+    analysis_group.add_argument(
+        "--no-status", action="store_true", help="Exclude trap status distribution"
     )
     p.add_argument(
         "--top-n", type=int, default=DEFAULT_TOP_N, metavar="N",
         help=f"Number of top traps to show in catch-rate and sprung analyses (default: {DEFAULT_TOP_N})"
-    )
-    analysis_group.add_argument(
-        "--status", action="store_true", help="Trap status distribution"
     )
 
     args = p.parse_args(argv)
@@ -698,24 +700,24 @@ def main(argv: list[str] | None = None) -> int:
     if not args.all and args.csv is None:
         p.error("give a CSV path or use -a")
 
-    requested = {
+    excluded = {
         key
         for key, flag in [
-            ("species",           args.species),
-            ("over_time",         args.over_time),
-            ("rate_over_time",    args.rate_over_time),
-            ("species_over_time", args.species_over_time),
-            ("cumulative",        args.cumulative),
-            ("catch_rates",       args.catch_rates),
-            ("catch_concentration",   args.catch_concentration),
-            ("inter_catch",       args.inter_catch),
-            ("sprung",            args.sprung),
-            ("bait_missing",      args.bait_missing),
-            ("status",            args.status),
+            ("species",             args.no_species),
+            ("over_time",           args.no_over_time),
+            ("rate_over_time",      args.no_rate_over_time),
+            ("species_over_time",   args.no_species_over_time),
+            ("cumulative",          args.no_cumulative),
+            ("catch_rates",         args.no_catch_rates),
+            ("catch_concentration", args.no_catch_concentration),
+            ("inter_catch",         args.no_inter_catch),
+            ("sprung",              args.no_sprung),
+            ("bait_missing",        args.no_bait_missing),
+            ("status",              args.no_status),
         ]
         if flag
     }
-    selected = requested if requested else ALL_ANALYSES
+    selected = ALL_ANALYSES - excluded
 
     if args.all:
         paths = sorted(Path(".").glob("*.csv"))
