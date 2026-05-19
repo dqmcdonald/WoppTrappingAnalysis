@@ -22,7 +22,7 @@ Analysis flags (combine freely; omit all to include everything):
     --species-over-time    Catches per week broken down by species
     --cumulative           Cumulative catches over time by species
     --catch-rates          Top-N traps by catch rate (min. 3 visits)
-    --trap-efficiency      Pareto curves by species: % of traps vs cumulative % of catches
+    --catch-concentration  Pareto curves by species: % of traps vs cumulative % of catches
     --inter-catch          Inter-catch interval box plot for top-N traps
     --sprung               Top-N traps most often found sprung with no catch
     --status               Trap status distribution
@@ -278,7 +278,7 @@ def plot_inter_catch_interval(df: pd.DataFrame, by_trap: pd.DataFrame, top_n: in
     return _fig_to_buf(fig)
 
 
-def plot_trap_efficiency(df: pd.DataFrame) -> io.BytesIO:
+def plot_catch_concentration(df: pd.DataFrame) -> io.BytesIO:
     catches = df[df["strikes"] > 0].copy()
     catches["species caught"] = catches["species caught"].replace({"None": pd.NA, "": pd.NA})
     catches = catches.dropna(subset=["species caught"])
@@ -372,7 +372,7 @@ def plot_status(status: pd.Series) -> io.BytesIO:
     return _fig_to_buf(fig)
 
 
-ALL_ANALYSES = {"species", "over_time", "species_over_time", "cumulative", "catch_rates", "trap_efficiency", "inter_catch", "sprung", "status"}
+ALL_ANALYSES = {"species", "over_time", "species_over_time", "cumulative", "catch_rates", "catch_concentration", "inter_catch", "sprung", "status"}
 
 
 def make_plots(df: pd.DataFrame, stats: dict, selected: set[str], top_n: int) -> dict:
@@ -382,7 +382,7 @@ def make_plots(df: pd.DataFrame, stats: dict, selected: set[str], top_n: int) ->
         "species_over_time": lambda: plot_species_over_time(df),
         "cumulative":        lambda: plot_cumulative_catches(df),
         "catch_rates":       lambda: plot_catch_rates(stats["by_trap_rate"], top_n),
-        "trap_efficiency":   lambda: plot_trap_efficiency(df),
+        "catch_concentration":   lambda: plot_catch_concentration(df),
         "inter_catch":       lambda: plot_inter_catch_interval(df, stats["by_trap_rate"], top_n),
         "sprung":            lambda: plot_sprung_no_catch(df, top_n),
         "status":            lambda: plot_status(stats["status"]),
@@ -474,7 +474,7 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path, top_n:
         ("species_over_time", "Catches over time by species",   True),
         ("cumulative",        "Cumulative catches by species",  True),
         ("catch_rates",       "Trap catch rates",               True),
-        ("trap_efficiency",   "Trap efficiency",                True),
+        ("catch_concentration",   "Catch concentration",            True),
         ("inter_catch",       "Inter-catch interval",          True),
         ("sprung",            "Frequently sprung traps",       True),
         ("status",            "Trap status",                   False),
@@ -494,6 +494,19 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path, top_n:
             rows = [[sp, str(int(n))] for sp, n in stats["species"].items()]
             story.append(Spacer(1, 0.1 * inch))
             story.append(_grid_table(["Species", "Catches"], rows))
+
+        if key == "catch_concentration":
+            story.append(Spacer(1, 0.1 * inch))
+            story.append(Paragraph(
+                "Each curve shows what percentage of total catches for a species are "
+                "accounted for by a given percentage of traps, with traps ranked from "
+                "highest to lowest catching. A curve that rises steeply indicates that "
+                "catches are concentrated in a small number of traps; a curve closer to "
+                "the diagonal indicates catches are spread more evenly across the network. "
+                "The dashed line marks the 80% level — where a curve crosses this line "
+                "shows what proportion of traps accounts for 80% of catches for that species.",
+                small,
+            ))
 
         if key == "catch_rates":
             bt = stats["by_trap_rate"]
@@ -575,8 +588,8 @@ def main(argv: list[str] | None = None) -> int:
         help=f"Top-N traps by catch rate (min. {CATCH_RATE_MIN_VISITS} visits)"
     )
     analysis_group.add_argument(
-        "--trap-efficiency", action="store_true",
-        help="Cumulative catch distribution across traps (Pareto curve)"
+        "--catch-concentration", action="store_true",
+        help="Pareto curves by species: % of traps vs cumulative % of catches"
     )
     analysis_group.add_argument(
         "--inter-catch", action="store_true",
@@ -609,7 +622,7 @@ def main(argv: list[str] | None = None) -> int:
             ("species_over_time", args.species_over_time),
             ("cumulative",        args.cumulative),
             ("catch_rates",       args.catch_rates),
-            ("trap_efficiency",   args.trap_efficiency),
+            ("catch_concentration",   args.catch_concentration),
             ("inter_catch",       args.inter_catch),
             ("sprung",            args.sprung),
             ("status",            args.status),

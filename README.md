@@ -53,7 +53,7 @@ python report_traps.py traps.csv --top-n 10
 #   --species-over-time    Catches per week broken down by species
 #   --cumulative           Cumulative catches over time by species
 #   --catch-rates          Top-N traps by catch rate (min. 3 visits)
-#   --trap-efficiency      Pareto curves by species: % of traps vs cumulative % of catches
+#   --catch-concentration  Pareto curves by species: % of traps vs cumulative % of catches
 #   --inter-catch          Inter-catch interval box plot for top-N traps
 #   --sprung               Top-N traps most often found sprung with no catch
 #   --status               Trap status distribution
@@ -73,7 +73,7 @@ Each PDF includes (subject to the analysis flags chosen):
 - Catches over time (weekly, broken down by species)
 - Cumulative catches over time by species
 - Top-N traps by catch rate (min. 3 visits), with summary table
-- Trap efficiency: Pareto curves per species (% of traps vs cumulative % of catches, 80% reference line)
+- Catch concentration: Pareto curves per species (% of traps vs cumulative % of catches, 80% reference line)
 - Inter-catch interval box plot for top-N traps by catch rate
 - Top-N traps most often found sprung with no catch (as % of visits)
 - Trap status breakdown (bait OK / bad / missing / sprung)
