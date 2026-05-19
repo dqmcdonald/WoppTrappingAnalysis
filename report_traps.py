@@ -22,6 +22,7 @@ Analysis flags (combine freely; omit all to include everything):
     --species-over-time    Catches per week broken down by species
     --cumulative           Cumulative catches over time by species
     --catch-rates          Top-N traps by catch rate (min. 3 visits)
+    --trap-efficiency      Cumulative catch distribution across traps (Pareto)
     --inter-catch          Inter-catch interval box plot for top-N traps
     --sprung               Top-N traps most often found sprung with no catch
     --status               Trap status distribution
@@ -277,6 +278,38 @@ def plot_inter_catch_interval(df: pd.DataFrame, by_trap: pd.DataFrame, top_n: in
     return _fig_to_buf(fig)
 
 
+def plot_trap_efficiency(df: pd.DataFrame) -> io.BytesIO:
+    catches = df[df["strikes"] > 0].copy()
+    catches["species caught"] = catches["species caught"].replace({"None": pd.NA, "": pd.NA})
+    catches = catches.dropna(subset=["species caught"])
+
+    fig, ax = plt.subplots()
+    if catches.empty:
+        ax.text(0.5, 0.5, "No catches recorded", ha="center", va="center")
+        ax.set_axis_off()
+    else:
+        for species in sorted(catches["species caught"].unique()):
+            by_trap = (
+                catches[catches["species caught"] == species]
+                .groupby("code")["strikes"]
+                .sum()
+                .sort_values(ascending=False)
+            )
+            x = np.arange(1, len(by_trap) + 1) / len(by_trap) * 100
+            y = by_trap.cumsum() / by_trap.sum() * 100
+            ax.plot(x, y.values, label=species)
+
+        ax.axhline(80, linestyle="--", linewidth=0.75, color="#555555",
+                   alpha=0.7, label="80%")
+        ax.set_xlabel("% of traps (ranked by catches, highest first)")
+        ax.set_ylabel("Cumulative % of catches")
+        ax.set_title("Cumulative catch distribution by species")
+        ax.set_xlim(0, 100)
+        ax.set_ylim(0, 100)
+        ax.legend(fontsize=8)
+    return _fig_to_buf(fig)
+
+
 def plot_catch_rates(by_trap: pd.DataFrame, top_n: int) -> io.BytesIO:
     fig, ax = plt.subplots()
 
@@ -339,7 +372,7 @@ def plot_status(status: pd.Series) -> io.BytesIO:
     return _fig_to_buf(fig)
 
 
-ALL_ANALYSES = {"species", "over_time", "species_over_time", "cumulative", "catch_rates", "inter_catch", "sprung", "status"}
+ALL_ANALYSES = {"species", "over_time", "species_over_time", "cumulative", "catch_rates", "trap_efficiency", "inter_catch", "sprung", "status"}
 
 
 def make_plots(df: pd.DataFrame, stats: dict, selected: set[str], top_n: int) -> dict:
@@ -349,6 +382,7 @@ def make_plots(df: pd.DataFrame, stats: dict, selected: set[str], top_n: int) ->
         "species_over_time": lambda: plot_species_over_time(df),
         "cumulative":        lambda: plot_cumulative_catches(df),
         "catch_rates":       lambda: plot_catch_rates(stats["by_trap_rate"], top_n),
+        "trap_efficiency":   lambda: plot_trap_efficiency(df),
         "inter_catch":       lambda: plot_inter_catch_interval(df, stats["by_trap_rate"], top_n),
         "sprung":            lambda: plot_sprung_no_catch(df, top_n),
         "status":            lambda: plot_status(stats["status"]),
@@ -440,6 +474,7 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path, top_n:
         ("species_over_time", "Catches over time by species",   True),
         ("cumulative",        "Cumulative catches by species",  True),
         ("catch_rates",       "Trap catch rates",               True),
+        ("trap_efficiency",   "Trap efficiency",                True),
         ("inter_catch",       "Inter-catch interval",          True),
         ("sprung",            "Frequently sprung traps",       True),
         ("status",            "Trap status",                   False),
@@ -540,6 +575,10 @@ def main(argv: list[str] | None = None) -> int:
         help=f"Top-N traps by catch rate (min. {CATCH_RATE_MIN_VISITS} visits)"
     )
     analysis_group.add_argument(
+        "--trap-efficiency", action="store_true",
+        help="Cumulative catch distribution across traps (Pareto curve)"
+    )
+    analysis_group.add_argument(
         "--inter-catch", action="store_true",
         help="Box plot of days between catches for top-N traps by catch rate"
     )
@@ -570,6 +609,7 @@ def main(argv: list[str] | None = None) -> int:
             ("species_over_time", args.species_over_time),
             ("cumulative",        args.cumulative),
             ("catch_rates",       args.catch_rates),
+            ("trap_efficiency",   args.trap_efficiency),
             ("inter_catch",       args.inter_catch),
             ("sprung",            args.sprung),
             ("status",            args.status),
