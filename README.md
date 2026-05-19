@@ -41,25 +41,26 @@ python report_traps.py traps.csv
 # Report for every *.csv in the current directory
 python report_traps.py -a
 
-# Only include specific analyses
-python report_traps.py traps.csv --species --over-time
+# Exclude specific analyses (all are included by default)
+python report_traps.py traps.csv --no-species --no-status
 
 # Control the number of traps shown in ranked analyses
 python report_traps.py traps.csv --top-n 10
 
-# Available analysis flags (combine freely; omit all to include everything):
-#   --species              Catches by species
-#   --over-time            Catches per week over time (with linear trend line)
-#   --rate-over-time       Weekly catch rate (% of visits) over time
-#   --species-over-time    Catches per week broken down by species
-#   --cumulative           Cumulative catches over time by species
-#   --catch-rates          Top-N traps by catch rate (min. 3 visits)
-#   --catch-concentration  Pareto curves by species: % of traps vs cumulative % of catches
-#   --inter-catch          Inter-catch interval box plot for top-N traps
-#   --sprung               Top-N traps most often found sprung with no catch
-#   --status               Trap status distribution
+# Available --no-X flags to suppress individual sections:
+#   --no-species              Catches by species
+#   --no-over-time            Catches per week over time (with linear trend line)
+#   --no-rate-over-time       Weekly catch rate (% of visits) over time
+#   --no-species-over-time    Catches per week broken down by species
+#   --no-cumulative           Cumulative catches over time by species
+#   --no-catch-rates          Top-N traps by catch rate (min. 3 visits)
+#   --no-catch-concentration  Pareto curves by species: % of traps vs cumulative % of catches
+#   --no-inter-catch          Inter-catch interval box plot for top-N traps
+#   --no-sprung               Top-N traps most often found sprung with no catch
+#   --no-bait-missing         Top-N traps most often found with bait missing
+#   --no-status               Trap status distribution
 
-# --top-n controls the N in catch-rates, inter-catch, and sprung (default: 20)
+# --top-n controls the N in catch-rates, inter-catch, sprung, and bait-missing (default: 20)
 ```
 
 Output is written as `<csvname>_report.pdf` alongside each input file.
@@ -78,6 +79,7 @@ Each PDF includes (subject to the analysis flags chosen):
 - Catch concentration: Pareto curves per species (% of traps vs cumulative % of catches, 80% reference line)
 - Inter-catch interval box plot for top-N traps by catch rate
 - Top-N traps most often found sprung with no catch (as % of visits)
+- Top-N traps most often found with bait missing (as % of visits)
 - Trap status breakdown (bait OK / bad / missing / sprung)
 
 All dates are shown in dd/mm/yyyy format. Page numbers appear on every page.
