@@ -20,6 +20,7 @@ Analysis flags (combine freely; omit all to include everything):
     --species              Catches by species
     --over-time            Catches per week over time (with linear trend)
     --species-over-time    Catches per week broken down by species
+    --cumulative           Cumulative catches over time by species
     --catch-rates          Top-N traps by catch rate (min. 3 visits)
     --inter-catch          Inter-catch interval box plot for top-N traps
     --sprung               Top-N traps most often found sprung with no catch
@@ -181,6 +182,35 @@ def plot_over_time(df: pd.DataFrame) -> io.BytesIO:
     return _fig_to_buf(fig)
 
 
+def plot_cumulative_catches(df: pd.DataFrame) -> io.BytesIO:
+    catches = df[df["strikes"] > 0].copy()
+    catches["species caught"] = catches["species caught"].replace({"None": pd.NA, "": pd.NA})
+    catches = catches.dropna(subset=["species caught"])
+
+    fig, ax = plt.subplots()
+    if catches.empty:
+        ax.text(0.5, 0.5, "No catches recorded", ha="center", va="center")
+        ax.set_axis_off()
+    else:
+        for species in sorted(catches["species caught"].unique()):
+            series = (
+                catches[catches["species caught"] == species]
+                .groupby("date")["strikes"]
+                .sum()
+                .sort_index()
+                .cumsum()
+            )
+            ax.plot(series.index, series.values, drawstyle="steps-post",
+                    label=species)
+        ax.set_ylabel("Cumulative catches")
+        ax.set_xlabel("Date")
+        ax.set_title("Cumulative catches by species")
+        ax.legend()
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m/%Y"))
+        fig.autofmt_xdate()
+    return _fig_to_buf(fig)
+
+
 def plot_species_over_time(df: pd.DataFrame) -> io.BytesIO:
     catches = df[df["strikes"] > 0].copy()
     catches["species caught"] = catches["species caught"].replace({"None": pd.NA, "": pd.NA})
@@ -309,7 +339,7 @@ def plot_status(status: pd.Series) -> io.BytesIO:
     return _fig_to_buf(fig)
 
 
-ALL_ANALYSES = {"species", "over_time", "species_over_time", "catch_rates", "inter_catch", "sprung", "status"}
+ALL_ANALYSES = {"species", "over_time", "species_over_time", "cumulative", "catch_rates", "inter_catch", "sprung", "status"}
 
 
 def make_plots(df: pd.DataFrame, stats: dict, selected: set[str], top_n: int) -> dict:
@@ -317,6 +347,7 @@ def make_plots(df: pd.DataFrame, stats: dict, selected: set[str], top_n: int) ->
         "species":           lambda: plot_species(stats["species"]),
         "over_time":         lambda: plot_over_time(df),
         "species_over_time": lambda: plot_species_over_time(df),
+        "cumulative":        lambda: plot_cumulative_catches(df),
         "catch_rates":       lambda: plot_catch_rates(stats["by_trap_rate"], top_n),
         "inter_catch":       lambda: plot_inter_catch_interval(df, stats["by_trap_rate"], top_n),
         "sprung":            lambda: plot_sprung_no_catch(df, top_n),
@@ -406,8 +437,9 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path, top_n:
     sections = [
         ("species",           "Catches by species",            False),
         ("over_time",         "Catches over time",             True),
-        ("species_over_time", "Catches over time by species",  True),
-        ("catch_rates",       "Trap catch rates",              True),
+        ("species_over_time", "Catches over time by species",   True),
+        ("cumulative",        "Cumulative catches by species",  True),
+        ("catch_rates",       "Trap catch rates",               True),
         ("inter_catch",       "Inter-catch interval",          True),
         ("sprung",            "Frequently sprung traps",       True),
         ("status",            "Trap status",                   False),
@@ -501,6 +533,9 @@ def main(argv: list[str] | None = None) -> int:
         "--species-over-time", action="store_true", help="Catches per week broken down by species"
     )
     analysis_group.add_argument(
+        "--cumulative", action="store_true", help="Cumulative catches over time by species"
+    )
+    analysis_group.add_argument(
         "--catch-rates", action="store_true",
         help=f"Top-N traps by catch rate (min. {CATCH_RATE_MIN_VISITS} visits)"
     )
@@ -533,6 +568,7 @@ def main(argv: list[str] | None = None) -> int:
             ("species",           args.species),
             ("over_time",         args.over_time),
             ("species_over_time", args.species_over_time),
+            ("cumulative",        args.cumulative),
             ("catch_rates",       args.catch_rates),
             ("inter_catch",       args.inter_catch),
             ("sprung",            args.sprung),
