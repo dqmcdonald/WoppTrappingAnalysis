@@ -82,7 +82,7 @@ plt.rcParams.update(
 
 # ---------- data ----------
 
-RAT_ALIASES = {"Rat - Ship", "Rat - Norway"}
+RAT_ALIASES = {"Rat - Ship", "Rat - Norway", "Rat - Kiore"}
 
 
 def load_visits(path: Path) -> pd.DataFrame:
