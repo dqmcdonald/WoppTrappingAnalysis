@@ -22,7 +22,7 @@ Analysis flags (combine freely; omit all to include everything):
     --species-over-time    Catches per week broken down by species
     --cumulative           Cumulative catches over time by species
     --catch-rates          Top-N traps by catch rate (min. 3 visits)
-    --trap-efficiency      Cumulative catch distribution across traps (Pareto)
+    --trap-efficiency      Pareto curves by species: % of traps vs cumulative % of catches
     --inter-catch          Inter-catch interval box plot for top-N traps
     --sprung               Top-N traps most often found sprung with no catch
     --status               Trap status distribution
