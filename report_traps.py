@@ -10,10 +10,15 @@
 # ///
 """Generate a styled PDF report from a Trap.NZ visit-log CSV.
 
+Each trap's line is resolved from TrapLineAssignments.csv (matched on `trap nid`),
+falling back to the `line` value in the visit record when a trap is absent there.
+The lines present are listed in the report summary.
+
 Usage:
     report_traps.py <csv>                          # all analyses -> <stem>_report.pdf
     report_traps.py -a                             # every *.csv in cwd
     report_traps.py <csv> --no-species             # all except species
+    report_traps.py <csv> --line Green             # limit to the "Green" line -> <stem>_Green_report.pdf
     report_traps.py <csv> --no-inter-catch --top-n 10  # top 10 by catch rate, skip inter-catch
 
 Analysis flags (all included by default; use --no-X to exclude):
@@ -30,6 +35,7 @@ Analysis flags (all included by default; use --no-X to exclude):
     --no-status               Exclude trap status distribution
 
 Other options:
+    --line LINE            Limit the analysis to a single line (by name)
     --top-n N              Number of traps shown in catch-rates, inter-catch,
                            and sprung analyses (default: 20)
     -a, --all              Process every *.csv in the current directory
@@ -38,6 +44,7 @@ Other options:
 import argparse
 import glob
 import io
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -84,6 +91,27 @@ plt.rcParams.update(
 # ---------- data ----------
 
 RAT_ALIASES = {"Rat - Ship", "Rat - Norway", "Rat - Kiore"}
+LINE_ASSIGNMENTS_CSV = "TrapLineAssignments.csv"
+
+
+class LineNotFound(Exception):
+    """Requested --line is not present in the (resolved) data."""
+
+
+def resolve_lines(df: pd.DataFrame, assignments_path: Path) -> pd.DataFrame:
+    """Set each visit's line, preferring TrapLineAssignments.csv (matched on
+    `trap nid`) and falling back to the record's own `line` value."""
+    if "line" not in df.columns:
+        df["line"] = pd.Series(pd.NA, index=df.index, dtype="string")
+    if assignments_path.is_file():
+        a = pd.read_csv(assignments_path, usecols=["trap nid", "line"])
+        amap = dict(zip(
+            a["trap nid"].astype("string"),
+            a["line"].astype("string").str.strip(),
+        ))
+        assigned = df["trap nid"].astype("string").map(amap)
+        df["line"] = assigned.fillna(df["line"])
+    return df
 
 
 def load_visits(path: Path) -> pd.DataFrame:
@@ -118,6 +146,9 @@ def compute_stats(df: pd.DataFrame) -> dict:
     by_trap = by_trap[by_trap["visits"] >= CATCH_RATE_MIN_VISITS].copy()
     by_trap["rate"] = by_trap["catches"] / by_trap["visits"] * 100
 
+    lines_present = sorted(df["line"].dropna().unique().tolist())
+    unassigned_traps = int(df.loc[df["line"].isna(), "trap nid"].nunique())
+
     return {
         "total_visits": total_visits,
         "unique_traps": int(df["trap nid"].nunique()),
@@ -128,6 +159,8 @@ def compute_stats(df: pd.DataFrame) -> dict:
         "species": species,
         "status": status_counts,
         "by_trap_rate": by_trap,
+        "lines": lines_present,
+        "unassigned_traps": unassigned_traps,
     }
 
 
@@ -515,6 +548,10 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path, top_n:
     )
     story.append(Spacer(1, 0.2 * inch))
 
+    lines_txt = ", ".join(stats["lines"]) if stats["lines"] else "—"
+    if stats["unassigned_traps"]:
+        lines_txt += f" (+{stats['unassigned_traps']} unassigned)"
+
     story.append(Paragraph("Summary", h2))
     story.append(
         _kv_table(
@@ -524,6 +561,7 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path, top_n:
                 ("Total catches", f"{stats['total_catches']}"),
                 ("Overall catch rate", f"{stats['rate_pct']:.1f}% of visits"),
                 ("Date range", f"{date_min} — {date_max}"),
+                ("Lines present", Paragraph(lines_txt, body)),
             ]
         )
     )
@@ -621,12 +659,28 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path, top_n:
 # ---------- pipeline ----------
 
 
-def process(csv_path: Path, selected: set[str], top_n: int) -> Path:
+def process(csv_path: Path, selected: set[str], top_n: int, line: str | None = None) -> Path:
     df = load_visits(csv_path)
+    df = resolve_lines(df, csv_path.parent / LINE_ASSIGNMENTS_CSV)
+
+    if line is not None:
+        available = sorted(df["line"].dropna().unique().tolist())
+        if line not in available:
+            raise LineNotFound(
+                f"line {line!r} not present in {csv_path.name}; "
+                f"available: {', '.join(available) or 'none'}"
+            )
+        df = df[df["line"] == line].copy()
+        safe = re.sub(r"\W+", "_", line).strip("_")
+        out_path = csv_path.with_name(f"{csv_path.stem}_{safe}_report.pdf")
+        source_name = f"{csv_path.name} — line {line}"
+    else:
+        out_path = csv_path.with_name(f"{csv_path.stem}_report.pdf")
+        source_name = csv_path.name
+
     stats = compute_stats(df)
     plots = make_plots(df, stats, selected, top_n)
-    out_path = csv_path.with_name(f"{csv_path.stem}_report.pdf")
-    build_pdf(stats, plots, csv_path.name, out_path, top_n)
+    build_pdf(stats, plots, source_name, out_path, top_n)
     return out_path
 
 
@@ -689,6 +743,10 @@ def main(argv: list[str] | None = None) -> int:
         "--no-status", action="store_true", help="Exclude trap status distribution"
     )
     p.add_argument(
+        "--line", type=str, default=None, metavar="LINE",
+        help="Limit the analysis to a single line (by name)"
+    )
+    p.add_argument(
         "--top-n", type=int, default=DEFAULT_TOP_N, metavar="N",
         help=f"Number of top traps to show in catch-rate and sprung analyses (default: {DEFAULT_TOP_N})"
     )
@@ -732,7 +790,13 @@ def main(argv: list[str] | None = None) -> int:
 
     for path in paths:
         try:
-            out = process(path, selected, args.top_n)
+            out = process(path, selected, args.top_n, args.line)
+        except LineNotFound as e:
+            if args.all:
+                print(f"Skipping {path}: {e}", file=sys.stderr)
+                continue
+            print(str(e), file=sys.stderr)
+            return 1
         except Exception as e:
             print(f"FAILED {path}: {e}", file=sys.stderr)
             return 2

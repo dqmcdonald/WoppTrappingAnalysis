@@ -9,8 +9,8 @@
 # ///
 """Map each trap in a Trap.NZ visit-log CSV to its nearest named line.
 
-Trap.NZ exports for Diamond Harbour Coastal leave the `line` column blank, so
-line membership has to be inferred spatially. This assigns each unique trap to
+Some traps aren't assigned to a line in Trap.NZ, leaving the `line` column blank,
+so line membership has to be inferred spatially. This assigns each unique trap to
 the closest line defined in a Trap.NZ "lines" export (WKT geometries) and writes
 a lookup CSV with a per-trap distance for QC.
 

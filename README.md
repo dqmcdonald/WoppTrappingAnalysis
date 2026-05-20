@@ -32,7 +32,32 @@ pip install -r requirements.txt
 python report_traps.py traps.csv
 ```
 
-## Usage
+## Assigning traps to lines
+
+Some traps aren't assigned to a line in Trap.NZ, so the `line` column in their
+visit logs is left blank. `map_trap_lines.py` infers each trap's line spatially,
+assigning it to the **nearest** named line in a Trap.NZ *lines* export (WKT
+geometries). Coordinates are projected from WGS84 to NZTM2000 so distances come
+out in metres.
+
+```bash
+# Map traps to their nearest line -> TrapLineAssignments.csv
+python map_trap_lines.py DHCoastal.csv DHCoastalLines.csv
+
+# Also flag any trap further than 50 m from its assigned line (a QC check)
+python map_trap_lines.py DHCoastal.csv DHCoastalLines.csv --max-dist 50
+```
+
+Results are merged into a cumulative `TrapLineAssignments.csv` keyed on `trap nid`:
+re-running a trap file refreshes only its own rows, while assignments from other
+networks are preserved. Each row records `trap nid, code, trap type, latitude,
+longitude, easting, northing, line, line_colour, distance_m` (the last for QC).
+`report_traps.py` reads this file to resolve trap lines (see below).
+
+This step needs `pyproj` and `shapely` (both in `requirements.txt`; `uv run`
+installs them automatically).
+
+## Generating reports
 
 ```bash
 # Report for a single CSV (all analyses)
@@ -46,6 +71,9 @@ python report_traps.py traps.csv --no-species --no-status
 
 # Control the number of traps shown in ranked analyses
 python report_traps.py traps.csv --top-n 10
+
+# Limit the report to a single line -> traps_<line>_report.pdf
+python report_traps.py traps.csv --line Green
 
 # Available --no-X flags to suppress individual sections:
 #   --no-species              Catches by species
@@ -61,15 +89,21 @@ python report_traps.py traps.csv --top-n 10
 #   --no-status               Trap status distribution
 
 # --top-n controls the N in catch-rates, inter-catch, sprung, and bait-missing (default: 20)
+# --line LINE restricts the report to a single line by name
 ```
 
-Output is written as `<csvname>_report.pdf` alongside each input file.
+Each trap's line is taken from `TrapLineAssignments.csv` (matched on `trap nid`),
+falling back to the `line` value in the visit record when a trap isn't listed there.
+The lines present are shown in the report summary.
+
+Output is written as `<csvname>_report.pdf` alongside each input file
+(`<csvname>_<line>_report.pdf` when `--line` is used).
 
 ## Report contents
 
 Each PDF includes (subject to the analysis flags chosen):
 
-- Summary table (visits, traps, catches, catch rate, date range)
+- Summary table (visits, traps, catches, catch rate, date range, lines present)
 - Catches by species
 - Catches over time (weekly, total) with a linear trend line
 - Catch rate over time (weekly catches as % of visits) with a linear trend line
