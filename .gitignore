@@ -1,4 +1,5 @@
 *.csv
+!TrapLineAssignments.csv
 *.pdf
 __pycache__/
 *.pyc
