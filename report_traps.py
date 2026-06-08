@@ -23,6 +23,9 @@ Usage:
 
 Analysis flags (all included by default; use --no-X to exclude):
     --no-species              Exclude catches by species
+    --no-bait                 Exclude catch rate by bait type
+    --no-bait-traptype        Exclude catches per bait stacked by trap type
+    --no-species-bait         Exclude bait-by-species catch-count heatmap
     --no-over-time            Exclude catches per week over time (with linear trend)
     --no-rate-over-time       Exclude weekly catch rate (% of visits) over time
     --no-species-over-time    Exclude catches per week broken down by species
@@ -73,6 +76,11 @@ from reportlab.platypus import (
 PLOT_DPI = 150
 PLOT_W_IN, PLOT_H_IN = 6.5, 4.0
 CATCH_RATE_MIN_VISITS = 3
+# A bait must appear on at least this many visits before its catch rate is
+# reported. Without a floor, a bait used once or twice produces a meaningless
+# 0%/100% rate that swamps the chart; 5 keeps every routinely-used bait while
+# dropping the long tail of one-off experiments.
+BAIT_MIN_VISITS = 5
 DEFAULT_TOP_N = 20
 
 plt.style.use("seaborn-v0_8")
@@ -91,6 +99,13 @@ plt.rcParams.update(
 # ---------- data ----------
 
 RAT_ALIASES = {"Rat - Ship", "Rat - Norway", "Rat - Kiore"}
+# Bait names that mean the same thing for our purposes are folded together so
+# they share a single row in the catches-by-bait analysis. Keyed alias -> canonical.
+BAIT_ALIASES = {
+    "Fish": "Fish Pellets",
+    "Salted Rabbit": "Dehydrated Rabbit",
+    "Goodnature Nut Butter": "Peanut butter",
+}
 LINE_ASSIGNMENTS_CSV = "TrapLineAssignments.csv"
 
 
@@ -159,9 +174,52 @@ def compute_stats(df: pd.DataFrame) -> dict:
         "species": species,
         "status": status_counts,
         "by_trap_rate": by_trap,
+        "by_bait": compute_bait_stats(df),
         "lines": lines_present,
         "unassigned_traps": unassigned_traps,
     }
+
+
+def explode_bait(df: pd.DataFrame) -> pd.DataFrame:
+    """Return one row per (visit, individual bait ingredient).
+
+    The `bait type` field records what was on the trap at a visit. It is often a
+    single bait ("Peanut butter") but may list several comma-separated
+    ingredients ("Peanut butter, Dehydrated Rabbit"), and the order of those
+    ingredients is not consistent across records. To compare baits fairly we
+    split on commas and strip surrounding whitespace, so each ingredient is
+    counted on its own. A visit baited with two ingredients therefore
+    contributes a row — and its catch — to *each* ingredient: we can't tell
+    which of the two actually did the catching, so both get the credit. Visits
+    with no recorded bait (blank / NaN) drop out entirely. Equivalent bait
+    names are folded together via BAIT_ALIASES (e.g. "Fish" -> "Fish Pellets").
+
+    Only the columns needed downstream are retained: `bait`, `strikes`, and the
+    `trap type` / `species caught` dimensions callers break the catches down by.
+    """
+    exploded = df.assign(bait=df["bait type"].str.split(",")).explode("bait")
+    exploded["bait"] = exploded["bait"].str.strip().replace(BAIT_ALIASES)
+    exploded = exploded[exploded["bait"].notna() & (exploded["bait"] != "")]
+    return exploded[["bait", "trap type", "species caught", "strikes"]]
+
+
+def compute_bait_stats(df: pd.DataFrame, min_visits: int = BAIT_MIN_VISITS) -> pd.DataFrame:
+    """Per-bait visit count, catch count, and catch rate (catches / visits).
+
+    Catch *rate* — not raw catch count — is the fair comparison between baits:
+    a bait used on hundreds of visits will rack up more total catches than a
+    rarely-used one simply through exposure, regardless of how effective it is.
+    Baits seen on fewer than `min_visits` visits are dropped as too noisy to
+    rank (see BAIT_MIN_VISITS). The result is indexed by bait name.
+    """
+    exploded = explode_bait(df)
+    by_bait = exploded.groupby("bait").agg(
+        visits=("strikes", "size"),
+        catches=("strikes", "sum"),
+    )
+    by_bait = by_bait[by_bait["visits"] >= min_visits].copy()
+    by_bait["rate"] = by_bait["catches"] / by_bait["visits"] * 100
+    return by_bait
 
 
 # ---------- plots ----------
@@ -190,6 +248,124 @@ def plot_species(species: pd.Series) -> io.BytesIO:
             ax.text(v, i, f" {v}", va="center")
         ax.set_xlabel("Catches")
         ax.set_title("Catches by species")
+    return _fig_to_buf(fig)
+
+
+def plot_catch_by_bait(by_bait: pd.DataFrame) -> io.BytesIO:
+    """Horizontal bar chart of catch rate by bait type.
+
+    Bars are sorted so the most effective bait sits at the top, and each bar is
+    annotated with the rate and the underlying "(catches/visits)" so a high rate
+    backed by few visits is obvious at a glance. `by_bait` is the frame from
+    compute_bait_stats (already filtered to BAIT_MIN_VISITS); an empty frame
+    means no bait cleared that threshold, so we draw a placeholder instead.
+    """
+    fig, ax = plt.subplots()
+    if by_bait.empty:
+        ax.text(0.5, 0.5, f"No bait recorded on ≥{BAIT_MIN_VISITS} visits",
+                ha="center", va="center")
+        ax.set_axis_off()
+    else:
+        s = by_bait.sort_values("rate")
+        ax.barh(s.index, s["rate"], color="#6a4a8a")
+        for i, (rate, catches, visits) in enumerate(
+            zip(s["rate"], s["catches"], s["visits"])
+        ):
+            ax.text(rate, i, f" {rate:.1f}% ({int(catches)}/{int(visits)})",
+                    va="center", fontsize=8)
+        ax.set_xlabel("Catch rate (% of visits)")
+        ax.set_title(f"Catch rate by bait type (min. {BAIT_MIN_VISITS} visits)")
+    return _fig_to_buf(fig)
+
+
+def plot_catch_by_bait_traptype(df: pd.DataFrame, by_bait: pd.DataFrame) -> io.BytesIO:
+    """Stacked bar chart of catch *counts* per bait, split by trap type.
+
+    The companion catch-rate chart can't show this: rates don't add up, so they
+    can't be stacked. Here each bar is a bait's total catches, segmented by the
+    trap type that made each catch — revealing, e.g., that peanut butter's
+    catches come mostly from rat traps while possum dough's come from
+    Trapinators. Only baits that appear in `by_bait` (i.e. cleared the
+    BAIT_MIN_VISITS floor) are shown, so this section lines up with the rate
+    chart above it. Bars are ordered by total catches, largest at the top.
+    """
+    exploded = explode_bait(df)
+    catches = exploded[(exploded["strikes"] > 0) & exploded["bait"].isin(by_bait.index)]
+    # rows = bait, cols = trap type, cells = number of catches
+    matrix = catches.groupby(["bait", "trap type"]).size().unstack(fill_value=0)
+
+    fig, ax = plt.subplots()
+    if matrix.empty or int(matrix.to_numpy().sum()) == 0:
+        ax.text(0.5, 0.5, "No catches recorded for ranked baits",
+                ha="center", va="center")
+        ax.set_axis_off()
+        return _fig_to_buf(fig)
+
+    # ascending total so the biggest bait sits at the top of the horizontal axis
+    matrix = matrix.loc[matrix.sum(axis=1).sort_values().index]
+    left = np.zeros(len(matrix))
+    for trap_type in matrix.columns:
+        vals = matrix[trap_type].to_numpy()
+        ax.barh(matrix.index, vals, left=left, label=trap_type)
+        left += vals
+
+    ax.set_xlabel("Catches")
+    ax.set_title("Catches by bait, split by trap type")
+    ax.legend(fontsize=8, title="Trap type")
+    return _fig_to_buf(fig)
+
+
+def plot_species_bait_heatmap(df: pd.DataFrame, by_bait: pd.DataFrame) -> io.BytesIO:
+    """Heatmap of catch counts for each (bait, species) pairing.
+
+    Where the stacked chart asks "which trap type caught it", this asks "which
+    species did each bait actually catch" — the cell at (bait, species) is the
+    number of that species caught over visits carrying that bait. Colour and the
+    printed number both encode the count, so dominant pairings (peanut butter ->
+    mouse, possum dough -> possum, dehydrated rabbit -> rat) stand out at a
+    glance. Rows and columns are ordered by total catches so the busiest baits
+    and species sit top-left. Restricted to the same baits as the charts above
+    (those past the BAIT_MIN_VISITS floor); rows/columns are catches only, so
+    visits with no catch or no recorded species don't appear.
+    """
+    exploded = explode_bait(df)
+    catches = exploded[(exploded["strikes"] > 0) & exploded["bait"].isin(by_bait.index)].copy()
+    catches["species caught"] = catches["species caught"].replace({"None": pd.NA, "": pd.NA})
+    catches = catches.dropna(subset=["species caught"])
+    matrix = catches.groupby(["bait", "species caught"]).size().unstack(fill_value=0)
+
+    fig, ax = plt.subplots()
+    if matrix.empty or int(matrix.to_numpy().sum()) == 0:
+        ax.text(0.5, 0.5, "No identified catches for ranked baits",
+                ha="center", va="center")
+        ax.set_axis_off()
+        return _fig_to_buf(fig)
+
+    # busiest bait (row) and species (column) to the top-left
+    matrix = matrix.loc[matrix.sum(axis=1).sort_values(ascending=False).index]
+    matrix = matrix[matrix.sum(axis=0).sort_values(ascending=False).index]
+    data = matrix.to_numpy()
+
+    ax.grid(False)  # the seaborn style's gridlines would cut across the cells
+    im = ax.imshow(data, aspect="auto", cmap="YlOrRd")
+    ax.set_xticks(range(len(matrix.columns)), labels=matrix.columns,
+                  rotation=45, ha="right")
+    ax.set_yticks(range(len(matrix.index)), labels=matrix.index)
+
+    # print the count in each non-zero cell, in whichever colour stays legible
+    threshold = data.max() / 2
+    for i in range(data.shape[0]):
+        for j in range(data.shape[1]):
+            count = int(data[i, j])
+            if count:
+                ax.text(j, i, str(count), ha="center", va="center", fontsize=8,
+                        color="white" if data[i, j] > threshold else "black")
+
+    cbar = fig.colorbar(im, ax=ax)
+    cbar.set_label("Catches")
+    ax.set_xlabel("Species")
+    ax.set_ylabel("Bait")
+    ax.set_title("Catches by bait and species")
     return _fig_to_buf(fig)
 
 
@@ -464,12 +640,15 @@ def plot_status(status: pd.Series) -> io.BytesIO:
     return _fig_to_buf(fig)
 
 
-ALL_ANALYSES = {"species", "over_time", "rate_over_time", "species_over_time", "cumulative", "catch_rates", "catch_concentration", "inter_catch", "sprung", "bait_missing", "status"}
+ALL_ANALYSES = {"species", "bait", "bait_traptype", "species_bait", "over_time", "rate_over_time", "species_over_time", "cumulative", "catch_rates", "catch_concentration", "inter_catch", "sprung", "bait_missing", "status"}
 
 
 def make_plots(df: pd.DataFrame, stats: dict, selected: set[str], top_n: int) -> dict:
     builders = {
         "species":           lambda: plot_species(stats["species"]),
+        "bait":              lambda: plot_catch_by_bait(stats["by_bait"]),
+        "bait_traptype":     lambda: plot_catch_by_bait_traptype(df, stats["by_bait"]),
+        "species_bait":      lambda: plot_species_bait_heatmap(df, stats["by_bait"]),
         "over_time":         lambda: plot_over_time(df),
         "rate_over_time":    lambda: plot_catch_rate_over_time(df),
         "species_over_time": lambda: plot_species_over_time(df),
@@ -568,7 +747,10 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path, top_n:
     story.append(Spacer(1, 0.25 * inch))
 
     sections = [
-        ("species",           "Catches by species",            False),
+        ("species",           "Catches by species",            True),
+        ("bait",              "Catches by bait",                True),
+        ("bait_traptype",     "Catches by bait and trap type",  True),
+        ("species_bait",      "Catches by bait and species",    True),
         ("over_time",         "Catches over time",              True),
         ("rate_over_time",    "Catch rate over time",           True),
         ("species_over_time", "Catches over time by species",   True),
@@ -595,6 +777,53 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path, top_n:
             rows = [[sp, str(int(n))] for sp, n in stats["species"].items()]
             story.append(Spacer(1, 0.1 * inch))
             story.append(_grid_table(["Species", "Catches"], rows))
+
+        if key == "bait":
+            bb = stats["by_bait"]
+            if not bb.empty:
+                ordered = bb.sort_values("rate", ascending=False)
+                story.append(Spacer(1, 0.1 * inch))
+                story.append(_grid_table(
+                    ["Bait", "Visits", "Catches", "Rate"],
+                    [[b, str(int(r.visits)), str(int(r.catches)), f"{r.rate:.1f}%"]
+                     for b, r in ordered.iterrows()],
+                ))
+            story.append(Spacer(1, 0.1 * inch))
+            story.append(Paragraph(
+                "Catch rate is the percentage of visits carrying a given bait "
+                "that recorded a catch, using the bait noted on each visit. "
+                "Rate (rather than raw catch count) is shown so heavily-used and "
+                "rarely-used baits can be compared fairly. Where a visit lists "
+                "more than one bait, each ingredient is counted separately and "
+                "shares the credit for any catch — the data can't say which bait "
+                f"did the work. Baits recorded on fewer than {BAIT_MIN_VISITS} "
+                "visits are omitted as too sparse to rank.",
+                small,
+            ))
+
+        if key == "bait_traptype":
+            story.append(Spacer(1, 0.1 * inch))
+            story.append(Paragraph(
+                "The same baits as above, now showing the total number of "
+                "catches each produced (not the rate), with every bar split by "
+                "the type of trap that made the catch. This shows where a bait's "
+                "catches actually come from — a bait may pair naturally with one "
+                "trap type and rarely be used on others. Bait that appears on a "
+                "visit alongside others is counted for each, as before.",
+                small,
+            ))
+
+        if key == "species_bait":
+            story.append(Spacer(1, 0.1 * inch))
+            story.append(Paragraph(
+                "Each cell is the number of a given species caught over visits "
+                "carrying a given bait; darker cells and larger numbers mean more "
+                "catches. Reading across a row shows what a bait tends to catch; "
+                "reading down a column shows which baits account for a species. "
+                "Only catches with an identified species are shown, for the same "
+                "baits as the charts above.",
+                small,
+            ))
 
         if key == "inter_catch":
             story.append(Spacer(1, 0.1 * inch))
@@ -705,11 +934,22 @@ def main(argv: list[str] | None = None) -> int:
         "--no-species", action="store_true", help="Exclude catches by species"
     )
     analysis_group.add_argument(
+        "--no-bait", action="store_true", help="Exclude catch rate by bait type"
+    )
+    analysis_group.add_argument(
+        "--no-bait-traptype", action="store_true",
+        help="Exclude catches per bait stacked by trap type"
+    )
+    analysis_group.add_argument(
+        "--no-species-bait", action="store_true",
+        help="Exclude bait-by-species catch-count heatmap"
+    )
+    analysis_group.add_argument(
         "--no-over-time", action="store_true", help="Exclude catches per week over time"
     )
     analysis_group.add_argument(
         "--no-rate-over-time", action="store_true",
-        help="Exclude weekly catch rate (catches as % of visits) over time"
+        help="Exclude weekly catch rate (catches as %% of visits) over time"
     )
     analysis_group.add_argument(
         "--no-species-over-time", action="store_true",
@@ -725,7 +965,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     analysis_group.add_argument(
         "--no-catch-concentration", action="store_true",
-        help="Exclude Pareto curves by species: % of traps vs cumulative % of catches"
+        help="Exclude Pareto curves by species: %% of traps vs cumulative %% of catches"
     )
     analysis_group.add_argument(
         "--no-inter-catch", action="store_true",
@@ -762,6 +1002,9 @@ def main(argv: list[str] | None = None) -> int:
         key
         for key, flag in [
             ("species",             args.no_species),
+            ("bait",                args.no_bait),
+            ("bait_traptype",       args.no_bait_traptype),
+            ("species_bait",        args.no_species_bait),
             ("over_time",           args.no_over_time),
             ("rate_over_time",      args.no_rate_over_time),
             ("species_over_time",   args.no_species_over_time),
@@ -778,7 +1021,12 @@ def main(argv: list[str] | None = None) -> int:
     selected = ALL_ANALYSES - excluded
 
     if args.all:
-        paths = sorted(Path(".").glob("*.csv"))
+        # Skip the trap-line assignments file: it's a lookup table consumed by
+        # resolve_lines, not a visit log to report on.
+        paths = [
+            p for p in sorted(Path(".").glob("*.csv"))
+            if p.name != LINE_ASSIGNMENTS_CSV
+        ]
         if not paths:
             print("No CSV files found in current directory.", file=sys.stderr)
             return 1

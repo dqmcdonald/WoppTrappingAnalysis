@@ -77,6 +77,9 @@ python report_traps.py traps.csv --line Green
 
 # Available --no-X flags to suppress individual sections:
 #   --no-species              Catches by species
+#   --no-bait                 Catch rate by bait type (min. 5 visits)
+#   --no-bait-traptype        Catches per bait, stacked by trap type
+#   --no-species-bait         Bait-by-species catch-count heatmap
 #   --no-over-time            Catches per week over time (with linear trend line)
 #   --no-rate-over-time       Weekly catch rate (% of visits) over time
 #   --no-species-over-time    Catches per week broken down by species
@@ -105,6 +108,9 @@ Each PDF includes (subject to the analysis flags chosen):
 
 - Summary table (visits, traps, catches, catch rate, date range, lines present)
 - Catches by species
+- Catches by bait: catch rate (% of baited visits resulting in a catch) per bait type, with summary table
+- Catches by bait and trap type: total catches per bait, stacked by the trap type that made each catch
+- Catches by bait and species: heatmap of catch counts for each bait/species pairing
 - Catches over time (weekly, total) with a linear trend line
 - Catch rate over time (weekly catches as % of visits) with a linear trend line
 - Catches over time (weekly, broken down by species)
@@ -123,3 +129,10 @@ All dates are shown in dd/mm/yyyy format. Page numbers appear on every page.
 - **Rat species**: "Rat - Ship" and "Rat - Norway" are merged into "Rat".
 - **Retired traps**: visits recorded under a `(retired)` code (e.g. `DHM004 (retired)`)
   are merged into the corresponding active trap record rather than excluded.
+- **Bait**: the `bait type` field may list several comma-separated baits for a
+  single visit (e.g. `"Peanut butter, Dehydrated Rabbit"`), in inconsistent
+  order. For the catches-by-bait analysis these are split into individual
+  ingredients, each counted separately, so a multi-bait visit (and any catch on
+  it) contributes to every bait listed. Visits with no recorded bait are
+  excluded from that analysis, and baits seen on fewer than 5 visits are dropped
+  as too sparse to rank.
