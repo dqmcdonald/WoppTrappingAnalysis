@@ -35,6 +35,7 @@ Analysis flags (all included by default; use --no-X to exclude):
     --no-inter-catch          Exclude inter-catch interval box plot for top-N traps
     --no-interval             Exclude catch rate / per-day yield vs checking interval
     --no-spatial              Exclude spatial clustering (Moran's I) of catch rates
+    --no-underperformers      Exclude watchlist of traps lagging nearby same-type traps
     --no-sprung               Exclude top-N traps most often found sprung with no catch
     --no-bait-missing         Exclude top-N traps most often found with bait missing
     --no-status               Exclude trap status distribution
@@ -98,6 +99,14 @@ INTERVAL_LABELS = ["1–3", "4–7", "8–14", "15–21", "22–28", "29+"]
 SPATIAL_KNN = 5
 SPATIAL_MIN_TRAPS = 5
 SPATIAL_PERMUTATIONS = 999
+
+# Underperforming-trap watchlist: a trap is flagged when its catch rate is at
+# least UNDERPERFORMER_MIN_GAP percentage points below the mean of its nearest
+# neighbours *of the same trap type* (so a possum trap is judged against nearby
+# possum traps, not against rodent traps). A trap type needs at least
+# UNDERPERFORMER_MIN_TYPE_TRAPS traps in the network to be comparable at all.
+UNDERPERFORMER_MIN_GAP = 5.0
+UNDERPERFORMER_MIN_TYPE_TRAPS = 4
 
 plt.style.use("seaborn-v0_8")
 plt.rcParams.update(
@@ -191,6 +200,7 @@ def compute_stats(df: pd.DataFrame) -> dict:
         "status": status_counts,
         "by_trap_rate": by_trap,
         "by_bait": compute_bait_stats(df),
+        "underperformers": compute_underperformers(df, by_trap),
         "lines": lines_present,
         "unassigned_traps": unassigned_traps,
     }
@@ -236,6 +246,62 @@ def compute_bait_stats(df: pd.DataFrame, min_visits: int = BAIT_MIN_VISITS) -> p
     by_bait = by_bait[by_bait["visits"] >= min_visits].copy()
     by_bait["rate"] = by_bait["catches"] / by_bait["visits"] * 100
     return by_bait
+
+
+def compute_underperformers(
+    df: pd.DataFrame,
+    by_trap: pd.DataFrame,
+    k: int = SPATIAL_KNN,
+    min_gap: float = UNDERPERFORMER_MIN_GAP,
+) -> pd.DataFrame:
+    """Traps catching far less than nearby traps of the same type.
+
+    For each trap (already filtered to those with enough visits in `by_trap`) we
+    find its `k` nearest neighbours *of the same trap type* by NZTM coordinates,
+    and compare its catch rate to their mean. Restricting to the same type is
+    what makes the comparison fair: trap types have structurally different catch
+    rates (a possum trap will never match a rat trap's hit rate), so judging a
+    trap only against comparable nearby traps isolates a likely siting or
+    maintenance problem from the trap type itself.
+
+    Returns the flagged traps — those at least `min_gap` percentage points below
+    their same-type neighbours — sorted worst-first, with `neighbour_mean` and
+    `gap` (neighbour_mean - rate) columns added. Trap types with fewer than
+    UNDERPERFORMER_MIN_TYPE_TRAPS traps are skipped (too few to compare), as are
+    traps without coordinates.
+    """
+    out_cols = list(by_trap.columns) + ["trap type", "neighbour_mean", "gap"]
+    if by_trap.empty:
+        return pd.DataFrame(columns=out_cols)
+
+    coords = df.groupby("code")[["easting", "northing"]].first().apply(
+        pd.to_numeric, errors="coerce"
+    )
+    trap_type = df.groupby("code")["trap type"].first()
+    sub = by_trap.join(coords).join(trap_type).dropna(
+        subset=["easting", "northing", "trap type"]
+    )
+
+    frames = []
+    for _, grp in sub.groupby("trap type", observed=True):
+        if len(grp) < UNDERPERFORMER_MIN_TYPE_TRAPS:
+            continue
+        xy = grp[["easting", "northing"]].to_numpy(float)
+        rate = grp["rate"].to_numpy(float)
+        kk = min(k, len(grp) - 1)
+        dist2 = ((xy[:, None, :] - xy[None, :, :]) ** 2).sum(-1)
+        np.fill_diagonal(dist2, np.inf)
+        nn = np.argsort(dist2, axis=1)[:, :kk]
+        g = grp.copy()
+        g["neighbour_mean"] = rate[nn].mean(axis=1)
+        g["gap"] = g["neighbour_mean"] - g["rate"]
+        frames.append(g)
+
+    if not frames:
+        return pd.DataFrame(columns=out_cols)
+    flagged = pd.concat(frames)
+    flagged = flagged[flagged["gap"] >= min_gap]
+    return flagged.sort_values("gap", ascending=False)
 
 
 # ---------- plots ----------
@@ -799,7 +865,49 @@ def plot_spatial_autocorrelation(df: pd.DataFrame, by_trap: pd.DataFrame) -> io.
     return _fig_to_buf(fig)
 
 
-ALL_ANALYSES = {"species", "bait", "bait_traptype", "species_bait", "over_time", "rate_over_time", "species_over_time", "cumulative", "catch_rates", "catch_concentration", "inter_catch", "interval", "spatial", "sprung", "bait_missing", "status"}
+def underperformer_fig_height(n: int) -> float:
+    return max(PLOT_H_IN, 0.32 * n + 1.2)
+
+
+def plot_underperformers(under: pd.DataFrame, top_n: int) -> io.BytesIO:
+    """Dumbbell chart of traps lagging nearby traps of their own type.
+
+    Each row is a flagged trap: a red dot for its own catch rate, a blue dot for
+    the mean of its same-type neighbours, and a bar joining them whose length is
+    the shortfall (annotated in percentage points). The worst offenders sit at
+    the top. `under` is the pre-computed, already-sorted frame from
+    compute_underperformers; we show at most `top_n` of them.
+    """
+    n = min(top_n, len(under))
+    fig_h = underperformer_fig_height(n) if n else PLOT_H_IN
+    fig, ax = plt.subplots(figsize=(PLOT_W_IN, fig_h))
+
+    if under.empty:
+        ax.text(0.5, 0.5, "No traps lagging nearby traps of their type",
+                ha="center", va="center")
+        ax.set_axis_off()
+        return _fig_to_buf(fig)
+
+    # nlargest gives the worst gaps; sort ascending so the worst ends up on top
+    top = under.nlargest(n, "gap").sort_values("gap")
+    y = np.arange(len(top))
+    ax.hlines(y, top["rate"], top["neighbour_mean"], color="#cccccc", lw=1.5, zorder=1)
+    ax.scatter(top["rate"], y, color="#a23b3b", s=28, zorder=2, label="This trap")
+    ax.scatter(top["neighbour_mean"], y, color="#3b6ea2", s=28, zorder=2,
+               label="Nearby same-type mean")
+    for yi, (nm, gap) in enumerate(zip(top["neighbour_mean"], top["gap"])):
+        ax.text(nm, yi, f"  −{gap:.0f}pp", va="center", fontsize=7, color="#555555")
+
+    ax.set_yticks(y)
+    ax.set_yticklabels(top.index)
+    ax.set_xlim(0, top["neighbour_mean"].max() * 1.18)
+    ax.set_xlabel("Catch rate (% of visits)")
+    ax.set_title(f"Traps underperforming nearby traps of the same type (worst {len(top)})")
+    ax.legend(fontsize=8, loc="lower right")
+    return _fig_to_buf(fig)
+
+
+ALL_ANALYSES = {"species", "bait", "bait_traptype", "species_bait", "over_time", "rate_over_time", "species_over_time", "cumulative", "catch_rates", "catch_concentration", "inter_catch", "interval", "spatial", "underperformers", "sprung", "bait_missing", "status"}
 
 
 def make_plots(df: pd.DataFrame, stats: dict, selected: set[str], top_n: int) -> dict:
@@ -817,6 +925,7 @@ def make_plots(df: pd.DataFrame, stats: dict, selected: set[str], top_n: int) ->
         "inter_catch":       lambda: plot_inter_catch_interval(df, stats["by_trap_rate"], top_n),
         "interval":          lambda: plot_catch_by_interval(df),
         "spatial":           lambda: plot_spatial_autocorrelation(df, stats["by_trap_rate"]),
+        "underperformers":   lambda: plot_underperformers(stats["underperformers"], top_n),
         "sprung":            lambda: plot_sprung_no_catch(df, top_n),
         "bait_missing":      lambda: plot_bait_missing(df, top_n),
         "status":            lambda: plot_status(stats["status"]),
@@ -919,6 +1028,7 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path, top_n:
         ("catch_rates",       "Trap catch rates",               True),
         ("catch_concentration",   "Catch concentration",            True),
         ("spatial",           "Spatial clustering of catch rates", True),
+        ("underperformers",   "Underperforming traps",         True),
         ("inter_catch",       "Inter-catch interval",          True),
         ("interval",          "Catch rate vs checking interval", True),
         ("sprung",            "Frequently sprung traps",       True),
@@ -933,6 +1043,9 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path, top_n:
         if key == "inter_catch":
             n_boxes = min(top_n, len(stats["by_trap_rate"]))
             story.append(_img(plots[key], height=inter_catch_fig_height(n_boxes)))
+        elif key == "underperformers":
+            n_rows = min(top_n, len(stats["underperformers"]))
+            story.append(_img(plots[key], height=underperformer_fig_height(n_rows)))
         else:
             story.append(_img(plots[key]))
 
@@ -1032,6 +1145,32 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path, top_n:
                 "reshuffling catch rates across locations many times: a small "
                 "p-value means clustering this strong is unlikely by chance. Only "
                 f"traps with at least {CATCH_RATE_MIN_VISITS} visits are included.",
+                small,
+            ))
+
+        if key == "underperformers":
+            up = stats["underperformers"]
+            if not up.empty:
+                shown = up.nlargest(min(top_n, len(up)), "gap")
+                story.append(Spacer(1, 0.1 * inch))
+                story.append(_grid_table(
+                    ["Trap", "Type", "Visits", "Catch rate", "Nearby mean", "Shortfall"],
+                    [[code, r["trap type"], str(int(r.visits)),
+                      f"{r.rate:.1f}%", f"{r.neighbour_mean:.1f}%", f"{r.gap:.1f} pp"]
+                     for code, r in shown.iterrows()],
+                ))
+            story.append(Spacer(1, 0.1 * inch))
+            story.append(Paragraph(
+                "A watchlist of traps catching less than comparable traps nearby. "
+                "Each trap is compared only to its nearest neighbours of the same "
+                "trap type, so a low rate that simply reflects the trap type "
+                "(rather than a problem with this trap) is not flagged. Listed "
+                f"traps sit at least {UNDERPERFORMER_MIN_GAP:.0f} percentage "
+                "points below that same-type neighbour mean — candidates for "
+                "checking the mechanism, bait, or siting, or for moving to a "
+                "busier spot. A large shortfall next to a high neighbour mean is "
+                "the strongest signal. Based on traps with at least "
+                f"{CATCH_RATE_MIN_VISITS} visits; the gap is in percentage points.",
                 small,
             ))
 
@@ -1177,6 +1316,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Exclude spatial clustering (Moran's I) of trap catch rates"
     )
     analysis_group.add_argument(
+        "--no-underperformers", action="store_true",
+        help="Exclude watchlist of traps lagging nearby same-type traps"
+    )
+    analysis_group.add_argument(
         "--no-sprung", action="store_true",
         help="Exclude most frequently sprung traps with no catch"
     )
@@ -1219,6 +1362,7 @@ def main(argv: list[str] | None = None) -> int:
             ("inter_catch",         args.no_inter_catch),
             ("interval",            args.no_interval),
             ("spatial",             args.no_spatial),
+            ("underperformers",     args.no_underperformers),
             ("sprung",              args.no_sprung),
             ("bait_missing",        args.no_bait_missing),
             ("status",              args.no_status),
