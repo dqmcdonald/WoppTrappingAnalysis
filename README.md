@@ -142,3 +142,26 @@ All dates are shown in dd/mm/yyyy format. Page numbers appear on every page.
   it) contributes to every bait listed. Visits with no recorded bait are
   excluded from that analysis, and baits seen on fewer than 5 visits are dropped
   as too sparse to rank.
+
+## Future ideas
+
+Analyses considered but not yet built, kept here as a backlog:
+
+- **Seasonal catch curves** — catches by month-of-year, overlaid across years.
+  Rodent and mustelid activity is strongly seasonal; this would show *when* to
+  intensify effort.
+- **Effort vs. yield by line** — visits-per-catch for each trap line, i.e. where
+  volunteer hours actually pay off. Pairs naturally with the existing per-trap
+  catch-rate and underperformer analyses.
+- **Servicing latency** — once a trap is found sprung or bait-missing, how long
+  until the next visit resets it? Surfaces traps sitting idle and unproductive,
+  and complements the checking-interval analysis.
+- **Knockdown vs. reinvasion** — after a catch at a trap, how long until the next
+  one? Lengthening gaps over time would be evidence that local suppression is
+  working.
+- **"Gone quiet" flagger** — traps that used to catch but have had a long dry
+  spell (possible broken/sprung mechanism, or pests locally cleared). A simple
+  watchlist table, analogous to the underperformer watchlist but time-based
+  rather than spatial.
+- **Geographic catch heat-map** — trap locations coloured/sized by catch rate.
+  Lower priority: Trap.NZ already provides this directly.
