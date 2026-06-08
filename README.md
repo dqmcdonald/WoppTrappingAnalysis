@@ -87,6 +87,8 @@ python report_traps.py traps.csv --line Green
 #   --no-catch-rates          Top-N traps by catch rate (min. 3 visits)
 #   --no-catch-concentration  Pareto curves by species: % of traps vs cumulative % of catches
 #   --no-inter-catch          Inter-catch interval box plot for top-N traps
+#   --no-interval             Catch rate / per-day yield vs checking interval
+#   --no-spatial              Spatial clustering (Moran's I) of trap catch rates
 #   --no-sprung               Top-N traps most often found sprung with no catch
 #   --no-bait-missing         Top-N traps most often found with bait missing
 #   --no-status               Trap status distribution
@@ -117,7 +119,9 @@ Each PDF includes (subject to the analysis flags chosen):
 - Cumulative catches over time by species
 - Top-N traps by catch rate (min. 3 visits), with summary table
 - Catch concentration: Pareto curves per species (% of traps vs cumulative % of catches, 80% reference line)
+- Spatial clustering: Moran scatterplot of each trap's catch rate vs its nearest neighbours', with Moran's I and a permutation p-value
 - Inter-catch interval box plot for top-N traps by catch rate
+- Catch rate vs checking interval: per-visit catch rate and catches-per-trap-day against the gap since the last check
 - Top-N traps most often found sprung with no catch (as % of visits)
 - Top-N traps most often found with bait missing (as % of visits)
 - Trap status breakdown (bait OK / bad / missing / sprung)

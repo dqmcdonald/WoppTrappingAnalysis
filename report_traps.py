@@ -33,6 +33,8 @@ Analysis flags (all included by default; use --no-X to exclude):
     --no-catch-rates          Exclude top-N traps by catch rate (min. 3 visits)
     --no-catch-concentration  Exclude Pareto curves by species: % of traps vs cumulative % of catches
     --no-inter-catch          Exclude inter-catch interval box plot for top-N traps
+    --no-interval             Exclude catch rate / per-day yield vs checking interval
+    --no-spatial              Exclude spatial clustering (Moran's I) of catch rates
     --no-sprung               Exclude top-N traps most often found sprung with no catch
     --no-bait-missing         Exclude top-N traps most often found with bait missing
     --no-status               Exclude trap status distribution
@@ -82,6 +84,20 @@ CATCH_RATE_MIN_VISITS = 3
 # dropping the long tail of one-off experiments.
 BAIT_MIN_VISITS = 5
 DEFAULT_TOP_N = 20
+
+# Checking-interval analysis: how many days passed since a trap was last
+# checked, grouped into bins. Same-day re-checks (interval 0) and each trap's
+# very first visit (no prior check) are excluded.
+INTERVAL_BINS = [0, 3, 7, 14, 21, 28, float("inf")]
+INTERVAL_LABELS = ["1–3", "4–7", "8–14", "15–21", "22–28", "29+"]
+
+# Spatial autocorrelation: each trap's catch rate is compared against the mean
+# of its SPATIAL_KNN nearest neighbours (by NZTM easting/northing). Needs at
+# least SPATIAL_MIN_TRAPS traps (each with >= CATCH_RATE_MIN_VISITS visits) to
+# be meaningful.
+SPATIAL_KNN = 5
+SPATIAL_MIN_TRAPS = 5
+SPATIAL_PERMUTATIONS = 999
 
 plt.style.use("seaborn-v0_8")
 plt.rcParams.update(
@@ -640,7 +656,150 @@ def plot_status(status: pd.Series) -> io.BytesIO:
     return _fig_to_buf(fig)
 
 
-ALL_ANALYSES = {"species", "bait", "bait_traptype", "species_bait", "over_time", "rate_over_time", "species_over_time", "cumulative", "catch_rates", "catch_concentration", "inter_catch", "sprung", "bait_missing", "status"}
+def plot_catch_by_interval(df: pd.DataFrame) -> io.BytesIO:
+    """Catch rate and per-day yield versus the gap since the last check.
+
+    For every visit we measure how many days have passed since that trap was
+    previously checked, then bin those gaps. Two metrics are plotted together
+    because they tell opposite halves of the same story:
+
+    * Catch rate (bars) — the share of visits that found a catch. This rises
+      with the gap simply because a longer-unwatched trap has had more time to
+      catch something, so a visit is more likely to find a result.
+    * Catches per trap-day (line) — catches divided by the total trap-days in
+      the bin, i.e. how fast the network is actually catching. This *falls* as
+      gaps grow: a caught animal sits in a sprung trap doing nothing until
+      someone resets it, and bait degrades.
+
+    Together they frame the checking-frequency trade-off: check often for
+    responsiveness and throughput, or check rarely for less effort per catch
+    found. A trap's first-ever visit (no prior check) and same-day re-checks
+    (interval 0) are excluded.
+    """
+    d = df.sort_values(["code", "date"]).copy()
+    d["interval"] = d.groupby("code")["date"].diff().dt.days
+    d = d[d["interval"] > 0]
+
+    fig, ax = plt.subplots()
+    if d.empty:
+        ax.text(0.5, 0.5, "Insufficient repeat-visit data", ha="center", va="center")
+        ax.set_axis_off()
+        return _fig_to_buf(fig)
+
+    d["bin"] = pd.cut(d["interval"], bins=INTERVAL_BINS, labels=INTERVAL_LABELS)
+    g = d.groupby("bin", observed=True).agg(
+        visits=("strikes", "size"),
+        catches=("strikes", "sum"),
+        trap_days=("interval", "sum"),
+    )
+    g = g[g["visits"] > 0]
+    g["rate"] = g["catches"] / g["visits"] * 100
+    g["per_day"] = g["catches"] / g["trap_days"]
+
+    x = np.arange(len(g))
+    bars = ax.bar(x, g["rate"], color="#3b6ea2", label="Catch rate (% of visits)")
+    for xi, (rate, visits) in enumerate(zip(g["rate"], g["visits"])):
+        ax.text(xi, rate, f"{rate:.0f}%\n({int(visits)}v)",
+                ha="center", va="bottom", fontsize=7)
+    ax.set_xticks(x)
+    ax.set_xticklabels(g.index)
+    ax.set_xlabel("Days since previous check")
+    ax.set_ylabel("Catch rate (% of visits)", color="#3b6ea2")
+    ax.set_ylim(0, g["rate"].max() * 1.25)
+
+    ax2 = ax.twinx()
+    ax2.grid(False)  # keep the twin axis from double-drawing the seaborn grid
+    line, = ax2.plot(x, g["per_day"], marker="o", color="#a23b3b",
+                     label="Catches per trap-day")
+    ax2.set_ylabel("Catches per trap-day", color="#a23b3b")
+    ax2.set_ylim(0, g["per_day"].max() * 1.25)
+
+    ax.set_title("Catch rate and yield vs checking interval")
+    ax.legend([bars, line], [bars.get_label(), line.get_label()],
+              fontsize=8, loc="upper left")
+    return _fig_to_buf(fig)
+
+
+def plot_spatial_autocorrelation(df: pd.DataFrame, by_trap: pd.DataFrame) -> io.BytesIO:
+    """Moran scatterplot: do neighbouring traps have similar catch rates?
+
+    Asks whether catches cluster in space — are good traps surrounded by good
+    traps (suggesting local pest density drives results) or scattered at random
+    (suggesting per-trap luck or micro-siting)? Each trap with enough visits is
+    paired with its SPATIAL_KNN nearest neighbours (Euclidean distance on NZTM
+    easting/northing, already in metres). We standardise every trap's catch rate
+    and plot it (x) against the mean of its neighbours' standardised rates (y).
+
+    The slope of that cloud *is* Moran's I, the standard measure of spatial
+    autocorrelation: I > 0 means clustering (the upper-right and lower-left
+    quadrants fill — hot near hot, cold near cold), I ~ 0 means no spatial
+    pattern, I < 0 means a checkerboard. A permutation test (shuffling rates
+    across locations SPATIAL_PERMUTATIONS times) gives a p-value for whether the
+    observed clustering could have arisen by chance.
+    """
+    fig, ax = plt.subplots()
+
+    coords = df.groupby("code")[["easting", "northing"]].first().apply(
+        pd.to_numeric, errors="coerce"
+    )
+    sub = by_trap.join(coords, how="inner").dropna(subset=["easting", "northing"])
+
+    if len(sub) < SPATIAL_MIN_TRAPS:
+        ax.text(0.5, 0.5,
+                f"Need ≥{SPATIAL_MIN_TRAPS} traps with coordinates and "
+                f"≥{CATCH_RATE_MIN_VISITS} visits", ha="center", va="center")
+        ax.set_axis_off()
+        return _fig_to_buf(fig)
+
+    rate = sub["rate"].to_numpy(float)
+    xy = sub[["easting", "northing"]].to_numpy(float)
+    n = len(rate)
+    k = min(SPATIAL_KNN, n - 1)
+
+    # row-standardised k-nearest-neighbour weight matrix
+    dist2 = ((xy[:, None, :] - xy[None, :, :]) ** 2).sum(-1)
+    np.fill_diagonal(dist2, np.inf)
+    nn = np.argsort(dist2, axis=1)[:, :k]
+    weights = np.zeros((n, n))
+    weights[np.repeat(np.arange(n), k), nn.ravel()] = 1.0 / k
+
+    dev = rate - rate.mean()
+    denom = (dev ** 2).sum()
+    if denom == 0:
+        ax.text(0.5, 0.5, "No variation in catch rate to correlate",
+                ha="center", va="center")
+        ax.set_axis_off()
+        return _fig_to_buf(fig)
+
+    moran_i = float(dev @ (weights @ dev) / denom)
+
+    # permutation test: how often does a random reshuffle match this clustering?
+    rng = np.random.default_rng(0)
+    ge = 1  # count the observed statistic itself
+    for _ in range(SPATIAL_PERMUTATIONS):
+        perm = rng.permutation(dev)
+        if perm @ (weights @ perm) / denom >= moran_i:
+            ge += 1
+    p_value = ge / (SPATIAL_PERMUTATIONS + 1)
+
+    z = dev / np.sqrt((dev ** 2).mean())  # standardised catch rate
+    lag = weights @ z                      # spatial lag (neighbour mean)
+
+    ax.axhline(0, lw=0.6, color="#999999")
+    ax.axvline(0, lw=0.6, color="#999999")
+    ax.scatter(z, lag, s=18, color="#3b6ea2", alpha=0.8)
+    xs = np.array([z.min(), z.max()])
+    ax.plot(xs, moran_i * xs, "--", lw=1.0, color="#a23b3b")
+    ax.set_xlabel("Trap catch rate (standardised)")
+    ax.set_ylabel(f"Mean of {k} nearest neighbours (standardised)")
+    ax.set_title(
+        f"Spatial clustering of catch rate — Moran's I = {moran_i:.2f} "
+        f"(p = {p_value:.3f})"
+    )
+    return _fig_to_buf(fig)
+
+
+ALL_ANALYSES = {"species", "bait", "bait_traptype", "species_bait", "over_time", "rate_over_time", "species_over_time", "cumulative", "catch_rates", "catch_concentration", "inter_catch", "interval", "spatial", "sprung", "bait_missing", "status"}
 
 
 def make_plots(df: pd.DataFrame, stats: dict, selected: set[str], top_n: int) -> dict:
@@ -656,6 +815,8 @@ def make_plots(df: pd.DataFrame, stats: dict, selected: set[str], top_n: int) ->
         "catch_rates":       lambda: plot_catch_rates(stats["by_trap_rate"], top_n),
         "catch_concentration":   lambda: plot_catch_concentration(df),
         "inter_catch":       lambda: plot_inter_catch_interval(df, stats["by_trap_rate"], top_n),
+        "interval":          lambda: plot_catch_by_interval(df),
+        "spatial":           lambda: plot_spatial_autocorrelation(df, stats["by_trap_rate"]),
         "sprung":            lambda: plot_sprung_no_catch(df, top_n),
         "bait_missing":      lambda: plot_bait_missing(df, top_n),
         "status":            lambda: plot_status(stats["status"]),
@@ -757,7 +918,9 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path, top_n:
         ("cumulative",        "Cumulative catches by species",  True),
         ("catch_rates",       "Trap catch rates",               True),
         ("catch_concentration",   "Catch concentration",            True),
+        ("spatial",           "Spatial clustering of catch rates", True),
         ("inter_catch",       "Inter-catch interval",          True),
+        ("interval",          "Catch rate vs checking interval", True),
         ("sprung",            "Frequently sprung traps",       True),
         ("bait_missing",      "Frequently bait-missing traps", True),
         ("status",            "Trap status",                   False),
@@ -835,6 +998,40 @@ def build_pdf(stats: dict, plots: dict, source_name: str, out_path: Path, top_n:
                 "extreme values within 1.5× the interquartile range. Points beyond "
                 "the whiskers are outliers. Traps are ordered by median interval, "
                 "with the most frequently catching traps at the top.",
+                small,
+            ))
+
+        if key == "interval":
+            story.append(Spacer(1, 0.1 * inch))
+            story.append(Paragraph(
+                "How the gap since a trap was last checked relates to what the "
+                "next visit finds. The bars (left axis) show the catch rate — the "
+                "share of visits that found a catch — which climbs with the gap "
+                "because a longer-unwatched trap has had more time to catch "
+                "something. The line (right axis) shows catches per trap-day, "
+                "i.e. how fast the network actually catches; it falls as gaps "
+                "grow, because a sprung trap sits idle and bait degrades until "
+                "someone returns. Checking often favours throughput and "
+                "responsiveness; checking rarely means less effort per catch "
+                "found. Each trap's first visit and same-day re-checks are "
+                "excluded.",
+                small,
+            ))
+
+        if key == "spatial":
+            story.append(Spacer(1, 0.1 * inch))
+            story.append(Paragraph(
+                "Whether catch rates cluster geographically. Each trap's "
+                "standardised catch rate (horizontal) is plotted against the mean "
+                "of its nearest neighbours' standardised rates (vertical); the "
+                "slope of the cloud is Moran's I. A positive I (points trending "
+                "into the upper-right and lower-left quadrants) means good traps "
+                "sit near good traps and quiet traps near quiet ones — catches "
+                "track local conditions rather than landing at random. A value "
+                "near zero means no spatial pattern. The p-value comes from "
+                "reshuffling catch rates across locations many times: a small "
+                "p-value means clustering this strong is unlikely by chance. Only "
+                f"traps with at least {CATCH_RATE_MIN_VISITS} visits are included.",
                 small,
             ))
 
@@ -972,6 +1169,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Exclude box plot of days between catches for top-N traps by catch rate"
     )
     analysis_group.add_argument(
+        "--no-interval", action="store_true",
+        help="Exclude catch rate and per-day yield vs checking interval"
+    )
+    analysis_group.add_argument(
+        "--no-spatial", action="store_true",
+        help="Exclude spatial clustering (Moran's I) of trap catch rates"
+    )
+    analysis_group.add_argument(
         "--no-sprung", action="store_true",
         help="Exclude most frequently sprung traps with no catch"
     )
@@ -1012,6 +1217,8 @@ def main(argv: list[str] | None = None) -> int:
             ("catch_rates",         args.no_catch_rates),
             ("catch_concentration", args.no_catch_concentration),
             ("inter_catch",         args.no_inter_catch),
+            ("interval",            args.no_interval),
+            ("spatial",             args.no_spatial),
             ("sprung",              args.no_sprung),
             ("bait_missing",        args.no_bait_missing),
             ("status",              args.no_status),
